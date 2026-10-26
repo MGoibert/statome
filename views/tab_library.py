@@ -30,15 +30,10 @@ STATUS_COLORS = {
 }
 
 
-def _on_close_book_detail():
-    st.session_state.active_dialog_book_id = None
-
-
-@st.dialog("📖 Fiche Détaillée & Édition", on_dismiss=_on_close_book_detail)
+@st.dialog("📖 Fiche Détaillée & Édition")
 def dialog_book_detail(book_id: int):
     book = get_book(book_id)
     if not book:
-        st.session_state.active_dialog_book_id = None
         st.error("Livre introuvable.")
         return
 
@@ -468,7 +463,7 @@ def dialog_book_detail(book_id: int):
                         "content": ncontent.strip()
                     })
                     st.success("Note ajoutée !")
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
         notes = get_book_notes(book_id)
         st.markdown(f"##### 📜 Citations et réflexions ({len(notes)})")
@@ -487,7 +482,7 @@ def dialog_book_detail(book_id: int):
                 with col_n_del:
                     if st.button("🗑️", key=f"del_n_{n['id']}", help="Supprimer cette note"):
                         delete_book_note(n["id"])
-                        st.rerun()
+                        st.rerun(scope="fragment")
         else:
             st.caption("Aucune note enregistrée.")
 
@@ -510,25 +505,18 @@ def dialog_book_detail(book_id: int):
                 with cs_del:
                     if st.button("❌", key=f"del_s_{s['id']}", help="Supprimer cette session"):
                         delete_reading_session(s["id"])
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
     st.markdown("---")
     with st.expander("⚠️ Zone danger"):
         st.caption("La suppression est irréversible et supprime l'ensemble des sessions et notes associées.")
         if st.button("🗑️ Supprimer définitivement ce livre", type="secondary", width="stretch"):
             delete_book(book_id)
-            st.session_state.active_dialog_book_id = None
             st.success("Livre supprimé de votre bibliothèque.")
             st.rerun()
 
 
 def render_tab_library():
-    if "active_dialog_book_id" not in st.session_state:
-        st.session_state.active_dialog_book_id = None
-
-    if st.session_state.active_dialog_book_id is not None:
-        dialog_book_detail(st.session_state.active_dialog_book_id)
-
     st.markdown("### 📚 Votre Bibliothèque & PAL")
 
     search_query = st.text_input("🔍 Rechercher un titre, auteur, saga, genre ou sous-genre...", placeholder="Ex: Kvothe, Sanderson, Grimdark, Romantasy...", label_visibility="collapsed")
@@ -651,5 +639,4 @@ def render_tab_library():
                 st.markdown(card_html, unsafe_allow_html=True)
 
                 if st.button("Détails / Éditer", key=f"btn_book_{b['id']}", width="stretch"):
-                    st.session_state.active_dialog_book_id = b["id"]
-                    st.rerun()
+                    dialog_book_detail(b["id"])
