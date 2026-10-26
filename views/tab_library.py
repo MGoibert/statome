@@ -276,94 +276,94 @@ def dialog_book_detail(book_id: int):
                 if not all_known:
                     st.info("Aucun tome externe supplémentaire trouvé pour cette saga.")
                 else:
-                db_vols_map = {
-                    round(float(b["series_volume"]), 1): b
-                    for b in db_series_books
-                    if b.get("series_volume") is not None
-                }
+                    db_vols_map = {
+                        round(float(b["series_volume"]), 1): b
+                        for b in db_series_books
+                        if b.get("series_volume") is not None
+                    }
 
-                for kv in all_known:
-                    kv_vol = kv.get("series_volume")
-                    kv_vol_round = round(float(kv_vol), 1) if kv_vol is not None else None
-                    in_db_book = db_vols_map.get(kv_vol_round) if kv_vol_round is not None else None
+                    for kv in all_known:
+                        kv_vol = kv.get("series_volume")
+                        kv_vol_round = round(float(kv_vol), 1) if kv_vol is not None else None
+                        in_db_book = db_vols_map.get(kv_vol_round) if kv_vol_round is not None else None
 
-                    # Statut de parution
-                    if kv["is_published"]:
-                        pub_badge = "<span style='background: rgba(16, 185, 129, 0.18); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;'>🟢 Publié</span>"
-                    else:
-                        pub_badge = "<span style='background: rgba(245, 158, 11, 0.18); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;'>🟡 À paraître / Non publié</span>"
-
-                    vol_display = f"Tome {kv_vol:g}" if kv_vol is not None else "Hors-série"
-                    pages_info = f" • {kv['num_pages']} p." if kv.get("num_pages") else ""
-                    rating_info = f" • ⭐ {kv['avg_rating']}/5" if kv.get("avg_rating") else ""
-
-                    c_img, c_info, c_action = st.columns([1, 3, 2])
-                    with c_img:
-                        if kv.get("cover_url"):
-                            st.image(kv["cover_url"], width=52)
+                        # Statut de parution
+                        if kv["is_published"]:
+                            pub_badge = "<span style='background: rgba(16, 185, 129, 0.18); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.4); padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;'>🟢 Publié</span>"
                         else:
-                            st.markdown('<div style="width: 52px; height: 75px; background: #334155; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 18px;">📖</div>', unsafe_allow_html=True)
+                            pub_badge = "<span style='background: rgba(245, 158, 11, 0.18); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;'>🟡 À paraître / Non publié</span>"
 
-                    with c_info:
-                        st.markdown(f"**{vol_display} : {kv['title']}**")
-                        st.markdown(f"{pub_badge} <span style='font-size: 0.75rem; color: #94A3B8;'>{pages_info}{rating_info}</span>", unsafe_allow_html=True)
-                        if in_db_book:
-                            in_st = in_db_book["status"]
-                            c_color = STATUS_COLORS.get(in_st, "#6366F1")
-                            st.markdown(f"<span style='color: {c_color}; font-size: 0.78rem; font-weight: 700;'>✅ Dans votre collection ({in_st})</span>", unsafe_allow_html=True)
+                        vol_display = f"Tome {kv_vol:g}" if kv_vol is not None else "Hors-série"
+                        pages_info = f" • {kv['num_pages']} p." if kv.get("num_pages") else ""
+                        rating_info = f" • ⭐ {kv['avg_rating']}/5" if kv.get("avg_rating") else ""
 
-                    with c_action:
-                        if not in_db_book:
-                            if kv["is_published"]:
-                                col_b1, col_b2 = st.columns(2)
-                                safe_key = f"{kv_vol}_{abs(hash(kv['title'])) % 10000}_{book_id}"
-                                with col_b1:
-                                    if st.button("🎁 Wishlist", key=f"btn_w_{safe_key}", help="Ajouter à ma Wishlist"):
-                                        add_book({
-                                            "title": kv["title"],
-                                            "series_name": book["series_name"],
-                                            "series_volume": kv_vol,
-                                            "author": kv.get("author") or book.get("author", "Inconnu"),
-                                            "author_country": book.get("author_country", "France"),
-                                            "publisher": book.get("publisher"),
-                                            "format": book.get("format", "Broché"),
-                                            "genres": book.get("genres", ["Fantasy"]),
-                                            "tags": book.get("tags", []),
-                                            "fantasy_subgenres": book.get("fantasy_subgenres", []),
-                                            "fantasy_subgenre": book.get("fantasy_subgenres", []),
-                                            "cover_url": kv.get("cover_url") or None,
-                                            "status": "Wishlist",
-                                            "current_page": 0,
-                                            "page_count": kv.get("num_pages") or 300
-                                        })
-                                        st.toast(f"« {kv['title']} » ajouté à votre Wishlist ! 🎁")
-                                        st.rerun()
-                                with col_b2:
-                                    if st.button("🛒 Acheter", key=f"btn_b_{safe_key}", help="Marquer À acheter"):
-                                        add_book({
-                                            "title": kv["title"],
-                                            "series_name": book["series_name"],
-                                            "series_volume": kv_vol,
-                                            "author": kv.get("author") or book.get("author", "Inconnu"),
-                                            "author_country": book.get("author_country", "France"),
-                                            "publisher": book.get("publisher"),
-                                            "format": book.get("format", "Broché"),
-                                            "genres": book.get("genres", ["Fantasy"]),
-                                            "tags": book.get("tags", []),
-                                            "fantasy_subgenres": book.get("fantasy_subgenres", []),
-                                            "fantasy_subgenre": book.get("fantasy_subgenres", []),
-                                            "cover_url": kv.get("cover_url") or None,
-                                            "status": "À acheter",
-                                            "current_page": 0,
-                                            "page_count": kv.get("num_pages") or 300
-                                        })
-                                        st.toast(f"« {kv['title']} » marqué À acheter ! 🛒")
-                                        st.rerun()
+                        c_img, c_info, c_action = st.columns([1, 3, 2])
+                        with c_img:
+                            if kv.get("cover_url"):
+                                st.image(kv["cover_url"], width=52)
                             else:
-                                st.caption("🟡 Non disponible (à paraître)")
-                        else:
-                            st.caption("Possédé")
-                    st.markdown("<hr style='margin: 6px 0; border: none; border-top: 1px dashed rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
+                                st.markdown('<div style="width: 52px; height: 75px; background: #334155; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 18px;">📖</div>', unsafe_allow_html=True)
+
+                        with c_info:
+                            st.markdown(f"**{vol_display} : {kv['title']}**")
+                            st.markdown(f"{pub_badge} <span style='font-size: 0.75rem; color: #94A3B8;'>{pages_info}{rating_info}</span>", unsafe_allow_html=True)
+                            if in_db_book:
+                                in_st = in_db_book["status"]
+                                c_color = STATUS_COLORS.get(in_st, "#6366F1")
+                                st.markdown(f"<span style='color: {c_color}; font-size: 0.78rem; font-weight: 700;'>✅ Dans votre collection ({in_st})</span>", unsafe_allow_html=True)
+
+                        with c_action:
+                            if not in_db_book:
+                                if kv["is_published"]:
+                                    col_b1, col_b2 = st.columns(2)
+                                    safe_key = f"{kv_vol}_{abs(hash(kv['title'])) % 10000}_{book_id}"
+                                    with col_b1:
+                                        if st.button("🎁 Wishlist", key=f"btn_w_{safe_key}", help="Ajouter à ma Wishlist"):
+                                            add_book({
+                                                "title": kv["title"],
+                                                "series_name": book["series_name"],
+                                                "series_volume": kv_vol,
+                                                "author": kv.get("author") or book.get("author", "Inconnu"),
+                                                "author_country": book.get("author_country", "France"),
+                                                "publisher": book.get("publisher"),
+                                                "format": book.get("format", "Broché"),
+                                                "genres": book.get("genres", ["Fantasy"]),
+                                                "tags": book.get("tags", []),
+                                                "fantasy_subgenres": book.get("fantasy_subgenres", []),
+                                                "fantasy_subgenre": book.get("fantasy_subgenres", []),
+                                                "cover_url": kv.get("cover_url") or None,
+                                                "status": "Wishlist",
+                                                "current_page": 0,
+                                                "page_count": kv.get("num_pages") or 300
+                                            })
+                                            st.toast(f"« {kv['title']} » ajouté à votre Wishlist ! 🎁")
+                                            st.rerun()
+                                    with col_b2:
+                                        if st.button("🛒 Acheter", key=f"btn_b_{safe_key}", help="Marquer À acheter"):
+                                            add_book({
+                                                "title": kv["title"],
+                                                "series_name": book["series_name"],
+                                                "series_volume": kv_vol,
+                                                "author": kv.get("author") or book.get("author", "Inconnu"),
+                                                "author_country": book.get("author_country", "France"),
+                                                "publisher": book.get("publisher"),
+                                                "format": book.get("format", "Broché"),
+                                                "genres": book.get("genres", ["Fantasy"]),
+                                                "tags": book.get("tags", []),
+                                                "fantasy_subgenres": book.get("fantasy_subgenres", []),
+                                                "fantasy_subgenre": book.get("fantasy_subgenres", []),
+                                                "cover_url": kv.get("cover_url") or None,
+                                                "status": "À acheter",
+                                                "current_page": 0,
+                                                "page_count": kv.get("num_pages") or 300
+                                            })
+                                            st.toast(f"« {kv['title']} » marqué À acheter ! 🛒")
+                                            st.rerun()
+                                else:
+                                    st.caption("🟡 Non disponible (à paraître)")
+                            else:
+                                st.caption("Possédé")
+                        st.markdown("<hr style='margin: 6px 0; border: none; border-top: 1px dashed rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
 
     with subtab2:
         with st.form(f"rating_form_{book_id}"):
