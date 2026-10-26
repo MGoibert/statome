@@ -28,11 +28,25 @@ COLOR_GRID = "#334155"      # Grid line
 PLOTLY_LAYOUT_DEFAULTS = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color=COLOR_TEXT, family="sans-serif", size=12),
-    margin=dict(l=25, r=25, t=40, b=30),
+    font=dict(color=COLOR_TEXT, family="sans-serif", size=11),
+    margin=dict(l=20, r=20, t=55, b=65),
     xaxis=dict(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID),
     yaxis=dict(gridcolor=COLOR_GRID, zerolinecolor=COLOR_GRID),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.22,
+        xanchor="center",
+        x=0.5,
+        font=dict(size=10)
+    ),
+    title=dict(
+        font=dict(size=13, color=COLOR_TEXT),
+        x=0.5,
+        xanchor="center",
+        y=0.98,
+        yanchor="top"
+    )
 )
 
 
@@ -329,9 +343,11 @@ def plot_daily_reading_activity(sessions: List[Dict[str, Any]], days_limit: int 
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Activité Journalière (Pages & Minutes)",
-        yaxis=dict(title="Pages lues", gridcolor=COLOR_GRID),
-        yaxis2=dict(title="Minutes", overlaying="y", side="right", showgrid=False)
+        title=dict(text="Activité Journalière (Pages & Minutes)", x=0.5, xanchor="center"),
+        yaxis=dict(title="Pages", gridcolor=COLOR_GRID),
+        yaxis2=dict(title="Min", overlaying="y", side="right", showgrid=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, font=dict(size=10)),
+        margin=dict(l=25, r=25, t=55, b=65)
     )
     fig.update_layout(**layout)
     return fig
@@ -341,7 +357,7 @@ def plot_weekday_vs_weekend(sessions: List[Dict[str, Any]]) -> go.Figure:
     """Comparatif Semaine (Lun-Ven) vs Week-end (Sam-Dim) : Temps moyen et Vitesse moyenne."""
     if not sessions:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucune donnée pour le comparatif")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucune donnée pour le comparatif", x=0.5, xanchor="center"))
         return fig
 
     df = pd.DataFrame(sessions)
@@ -358,7 +374,7 @@ def plot_weekday_vs_weekend(sessions: List[Dict[str, Any]]) -> go.Figure:
     fig.add_trace(go.Bar(
         x=grouped["day_type"],
         y=grouped["duration_minutes"].round(2),
-        name="Temps moyen par session (min)",
+        name="Durée moy. (min)",
         marker_color="#818CF8",
         text=grouped["duration_minutes"].round(2).astype(str) + " min",
         textposition="auto",
@@ -368,7 +384,7 @@ def plot_weekday_vs_weekend(sessions: List[Dict[str, Any]]) -> go.Figure:
     fig.add_trace(go.Bar(
         x=grouped["day_type"],
         y=grouped["pages_per_hour"].round(2),
-        name="Vitesse moyenne (pages/h)",
+        name="Vitesse moy. (p/h)",
         marker_color="#34D399",
         text=grouped["pages_per_hour"].round(2).astype(str) + " p/h",
         textposition="auto",
@@ -377,9 +393,11 @@ def plot_weekday_vs_weekend(sessions: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Comparatif Semaine vs Week-end",
+        title=dict(text="Comparatif Semaine vs Week-end", x=0.5, xanchor="center"),
         barmode="group",
-        yaxis=dict(title="Valeur", gridcolor=COLOR_GRID)
+        yaxis=dict(title="Valeur", gridcolor=COLOR_GRID),
+        legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, font=dict(size=10)),
+        margin=dict(l=20, r=20, t=55, b=65)
     )
     fig.update_layout(**layout)
     return fig
@@ -441,10 +459,11 @@ def plot_genres_distribution(books: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Top 10 des Genres",
+        title=dict(text="Top 10 des Genres", x=0.5, xanchor="center"),
         xaxis=dict(title="Nombre de livres", gridcolor=COLOR_GRID),
         yaxis=dict(title=""),
-        margin=dict(l=20, r=20, t=40, b=30)
+        showlegend=False,
+        margin=dict(l=20, r=20, t=50, b=35)
     )
     fig.update_layout(**layout)
     return fig
@@ -468,7 +487,7 @@ def plot_fantasy_subgenres(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not subg_to_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="✨ Sous-genres de Fantasy (aucun renseigné)")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="✨ Sous-genres de Fantasy (aucun renseigné)", x=0.5, xanchor="center"))
         return fig
 
     sorted_subg = sorted(subg_to_books.items(), key=lambda x: len(x[1]), reverse=False)
@@ -504,10 +523,11 @@ def plot_fantasy_subgenres(books: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="✨ Répartition des Sous-genres de Fantasy",
+        title=dict(text="✨ Répartition des Sous-genres de Fantasy", x=0.5, xanchor="center"),
         xaxis=dict(title="Nombre de livres", gridcolor=COLOR_GRID),
         yaxis=dict(title=""),
-        margin=dict(l=20, r=20, t=40, b=30)
+        showlegend=False,
+        margin=dict(l=20, r=20, t=50, b=35)
     )
     fig.update_layout(**layout)
     return fig
@@ -528,7 +548,7 @@ def plot_tags_treemap(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not tag_to_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucun tag/trope renseigné")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucun tag/trope renseigné", x=0.5, xanchor="center"))
         return fig
 
     # Trier par nombre de livres décroissant, top 15
@@ -565,8 +585,8 @@ def plot_tags_treemap(books: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Top 15 des Tags & Tropes",
-        margin=dict(l=15, r=15, t=40, b=15)
+        title=dict(text="Top 15 des Tags & Tropes", x=0.5, xanchor="center"),
+        margin=dict(l=15, r=15, t=50, b=20)
     )
     fig.update_layout(**layout)
     return fig
@@ -612,15 +632,16 @@ def plot_author_countries(books: List[Dict[str, Any]]) -> go.Figure:
     ))
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Nationalité des Auteurs",
+        title=dict(text="Nationalité des Auteurs", x=0.5, xanchor="center"),
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.12,
+            y=-0.15,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(size=10)
         ),
-        margin=dict(l=20, r=20, t=50, b=60)
+        margin=dict(l=20, r=20, t=55, b=65)
     )
     fig.update_layout(**layout)
     return fig
@@ -639,7 +660,7 @@ def plot_publishers_and_formats(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not format_to_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucun format renseigné")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucun format renseigné", x=0.5, xanchor="center"))
         return fig
 
     formats = []
@@ -665,15 +686,16 @@ def plot_publishers_and_formats(books: List[Dict[str, Any]]) -> go.Figure:
     ))
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Répartition par Format d'Édition",
+        title=dict(text="Répartition par Format d'Édition", x=0.5, xanchor="center"),
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.12,
+            y=-0.15,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(size=10)
         ),
-        margin=dict(l=20, r=20, t=50, b=60)
+        margin=dict(l=20, r=20, t=55, b=65)
     )
     fig.update_layout(**layout)
     return fig
@@ -722,25 +744,10 @@ def plot_book_size_distribution(books: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
-        title="Morphologie des Livres (Pagination)",
+        title=dict(text="Morphologie des Livres (Pagination)", x=0.5, xanchor="center"),
         yaxis=dict(title="Nombre d'ouvrages", gridcolor=COLOR_GRID),
-        margin=dict(l=20, r=20, t=40, b=30)
-    )
-    fig.update_layout(**layout)
-    return fig
-
-    fig = go.Figure(go.Bar(
-        x=categories,
-        y=counts,
-        marker_color=["#38BDF8", "#818CF8", "#A855F7", "#EC4899"],
-        text=counts,
-        textposition="auto"
-    ))
-
-    layout = dict(PLOTLY_LAYOUT_DEFAULTS)
-    layout.update(
-        title="Morphologie des Livres (Pagination)",
-        yaxis=dict(title="Nombre d'ouvrages", gridcolor=COLOR_GRID)
+        showlegend=False,
+        margin=dict(l=20, r=20, t=50, b=35)
     )
     fig.update_layout(**layout)
     return fig
@@ -787,8 +794,8 @@ def plot_radar_ratings(books: List[Dict[str, Any]]) -> go.Figure:
         ),
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color=COLOR_TEXT),
-        title="Profil d'Évaluation (Moyenne des Critères)",
-        margin=dict(l=30, r=30, t=40, b=30),
+        title=dict(text="Profil d'Évaluation (Moyenne des Critères)", x=0.5, xanchor="center"),
+        margin=dict(l=30, r=30, t=55, b=30),
         showlegend=False
     )
     return fig
@@ -803,7 +810,7 @@ def plot_rating_correlation(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not rated:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Pas assez de données pour la corrélation")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Pas assez de données pour la corrélation", x=0.5, xanchor="center"))
         return fig
 
     df = pd.DataFrame(rated)
@@ -815,7 +822,6 @@ def plot_rating_correlation(books: List[Dict[str, Any]]) -> go.Figure:
         hover_data={"title": True, "author": True, "popularity_score": ":.2f", "rating_global": ":.2f"},
         color="rating_global",
         color_continuous_scale="Bluered",
-        title="Corrélation Note Communauté vs Note Personnelle",
         labels={
             "popularity_score": "Note Communautaire (/5)",
             "rating_global": "Votre Note Globale (/5)"
@@ -836,8 +842,11 @@ def plot_rating_correlation(books: List[Dict[str, Any]]) -> go.Figure:
 
     layout = dict(PLOTLY_LAYOUT_DEFAULTS)
     layout.update(
+        title=dict(text="Note Communauté vs Note Personnelle", x=0.5, xanchor="center"),
         xaxis=dict(range=[2.5, 5.0], gridcolor=COLOR_GRID),
-        yaxis=dict(range=[1.0, 5.2], gridcolor=COLOR_GRID)
+        yaxis=dict(range=[1.0, 5.2], gridcolor=COLOR_GRID),
+        legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, font=dict(size=10)),
+        margin=dict(l=20, r=20, t=55, b=65)
     )
     fig.update_layout(**layout)
     fig.update_coloraxes(showscale=False)
