@@ -43,11 +43,15 @@ def get_database_url() -> str:
 
 DATABASE_URL = get_database_url()
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-    pool_pre_ping=True
-)
+@st.cache_resource
+def get_engine():
+    return create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+        pool_pre_ping=True
+    )
+
+engine = get_engine()
 
 SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 Base = declarative_base()
@@ -204,6 +208,7 @@ class BookNote(Base):
         }
 
 
+@st.cache_resource
 def init_db():
     """Initialise les tables de la base de données et applique les migrations douces."""
     Base.metadata.create_all(bind=engine)
