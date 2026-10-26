@@ -45,10 +45,18 @@ DATABASE_URL = get_database_url()
 
 @st.cache_resource
 def get_engine():
+    is_sqlite = DATABASE_URL.startswith("sqlite")
+    if is_sqlite:
+        return create_engine(
+            DATABASE_URL,
+            connect_args={"check_same_thread": False}
+        )
     return create_engine(
         DATABASE_URL,
-        connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-        pool_pre_ping=True
+        pool_recycle=300,
+        pool_pre_ping=False,
+        pool_size=5,
+        max_overflow=10
     )
 
 engine = get_engine()
