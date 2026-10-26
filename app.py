@@ -1,6 +1,6 @@
 """
 Application Mobile-First de Suivi de Lecture & d'Analyse Statistique Avancée.
-Point d'entrée principal Streamlit (app.py) - v1.0.2.
+Point d'entrée principal Streamlit (app.py) - v1.0.3.
 """
 
 import streamlit as st
@@ -73,6 +73,18 @@ st.markdown(
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+
+    /* Suppression du voile gris opaque lors des chargements */
+    .stApp [data-testid="stAppViewBlockContainer"] {
+        transition: none !important;
+    }
+    div[data-testid="stAppViewContainer"] > section.main {
+        opacity: 1 !important;
+        filter: none !important;
+    }
+    .st-emotion-cache-1wmy9hl, .st-emotion-cache-12w0qpk {
+        opacity: 1 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True

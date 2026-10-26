@@ -87,14 +87,6 @@ def dialog_book_detail(book_id: int):
         help="Modifie le statut immédiatement sans avoir à chercher dans les métadonnées."
     )
 
-    # Détection automatique de saga si le livre n'a pas encore de série renseignée en base
-    if not book.get("series_name") and book.get("title"):
-        inf_s, inf_v = infer_book_series(book["title"], book.get("author", ""))
-        if inf_s:
-            update_book(book_id, {"series_name": inf_s, "series_volume": inf_v})
-            book["series_name"] = inf_s
-            book["series_volume"] = inf_v
-
     st.markdown(f"### {book['title']}")
     series_info = f"— Série : {book['series_name']} (Tome {book['series_volume']})" if book.get('series_name') else ""
     st.caption(f"De **{book['author']}** {series_info}")
@@ -265,15 +257,25 @@ def dialog_book_detail(book_id: int):
                 st.markdown(sb_card_html, unsafe_allow_html=True)
 
             st.markdown("---")
-            # 2. Tous les tomes de la saga (Découverte externe)
+            # 2. Tous les tomes de la saga (Découverte externe à la demande pour une ouverture instantanée)
             st.markdown("##### 🌐 Tous les tomes connus de la saga")
-            st.caption("Recherche des tomes de cette saga (différencie tomes publiés et à paraître) :")
 
-            all_known = fetch_series_volumes(book["series_name"], book.get("author", ""), book.get("title", ""))
+            load_ext = st.checkbox(
+                "🔍 Rechercher tous les tomes sur Goodreads",
+                value=False,
+                key=f"chk_load_saga_ext_{book_id}",
+                help="Interroge Goodreads pour découvrir les tomes parus ou annoncés de cette saga."
+            )
 
-            if not all_known:
-                st.info("Aucun tome externe supplémentaire trouvé pour cette saga.")
+            if not load_ext:
+                st.caption("💡 Cochez la case ci-dessus pour explorer tous les tomes parus ou à paraître de cette saga.")
             else:
+                with st.spinner("Recherche des tomes sur Goodreads..."):
+                    all_known = fetch_series_volumes(book["series_name"], book.get("author", ""), book.get("title", ""))
+
+                if not all_known:
+                    st.info("Aucun tome externe supplémentaire trouvé pour cette saga.")
+                else:
                 db_vols_map = {
                     round(float(b["series_volume"]), 1): b
                     for b in db_series_books
@@ -391,25 +393,29 @@ def dialog_book_detail(book_id: int):
             add_next_wishlist = False
             next_vol_candidate = None
             if book.get("series_name"):
-                cur_vol = float(book.get("series_volume") or 1.0)
-                next_vol_candidate = find_next_series_volume(book["series_name"], book.get("author", ""), cur_vol, book.get("title", ""))
-                if next_vol_candidate:
-                    if next_vol_candidate.get("is_published"):
-                        existing_sb = get_books_by_series(book["series_name"], book.get("author", ""))
-                        has_next_in_db = any(eb.get("series_volume") is not None and abs(float(eb["series_volume"]) - float(next_vol_candidate["series_volume"])) < 0.05 for eb in existing_sb)
-                        if not has_next_in_db:
-                            st.markdown("---")
-                            add_next_wishlist = st.checkbox(
-                                f"🎁 Ajouter le Tome {next_vol_candidate['series_volume']:g} : « {next_vol_candidate['title']} » à ma Wishlist",
-                                value=False,
-                                help="Ajoute automatiquement le tome suivant réel dans votre Wishlist lors de l'enregistrement de l'avis."
-                            )
+                check_next = st.checkbox(
+                    "🎁 Vérifier si le tome suivant existe pour l'ajouter à ma Wishlist",
+                    value=False,
+                    key=f"chk_check_next_{book_id}",
+                    help="Recherche le tome suivant de la saga pour l'ajouter automatiquement à votre Wishlist."
+                )
+                if check_next:
+                    cur_vol = float(book.get("series_volume") or 1.0)
+                    with st.spinner("Recherche du tome suivant..."):
+                        next_vol_candidate = find_next_series_volume(book["series_name"], book.get("author", ""), cur_vol, book.get("title", ""))
+                    if next_vol_candidate:
+                        if next_vol_candidate.get("is_published"):
+                            existing_sb = get_books_by_series(book["series_name"], book.get("author", ""))
+                            has_next_in_db = any(eb.get("series_volume") is not None and abs(float(eb["series_volume"]) - float(next_vol_candidate["series_volume"])) < 0.05 for eb in existing_sb)
+                            if not has_next_in_db:
+                                add_next_wishlist = True
+                                st.success(f"Tome {next_vol_candidate['series_volume']:g} trouvé : **« {next_vol_candidate['title']} »** (sera ajouté lors de l'enregistrement)")
+                            else:
+                                st.info(f"Le Tome {next_vol_candidate['series_volume']:g} : « {next_vol_candidate['title']} » est déjà dans votre collection.")
+                        else:
+                            st.caption(f"🟡 **Tome {next_vol_candidate['series_volume']:g} ({next_vol_candidate['title']})** : À paraître / non encore publié (non disponible).")
                     else:
-                        st.markdown("---")
-                        st.caption(f"🟡 **Tome {next_vol_candidate['series_volume']:g} ({next_vol_candidate['title']})** : À paraître / non encore publié (non disponible).")
-                else:
-                    st.markdown("---")
-                    st.caption("🏁 **Dernier tome répertorié :** Aucun tome suivant n'est connu ou annoncé pour cette saga.")
+                        st.caption("🏁 **Dernier tome répertorié :** Aucun tome suivant n'est connu ou annoncé pour cette saga.")
 
             save_ratings = st.form_submit_button("⭐ Enregistrer l'évaluation", width="stretch", type="primary")
             if save_ratings:

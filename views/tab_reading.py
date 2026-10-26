@@ -54,30 +54,30 @@ def dialog_finish_book(book: dict):
         # Case à cocher pour ajouter le tome suivant de la saga à la Wishlist
         add_next_wishlist = False
         next_vol_candidate = None
-        if not book.get("series_name") and book.get("title"):
-            inf_s, inf_v = infer_book_series(book["title"], book.get("author", ""))
-            if inf_s:
-                update_book(book["id"], {"series_name": inf_s, "series_volume": inf_v})
-                book["series_name"] = inf_s
-                book["series_volume"] = inf_v
         if book.get("series_name"):
-            cur_vol = float(book.get("series_volume") or 1.0)
-            next_vol_candidate = find_next_series_volume(book["series_name"], book.get("author", ""), cur_vol, book.get("title", ""))
-            if next_vol_candidate:
-                if next_vol_candidate.get("is_published"):
-                    existing_series_books = get_books_by_series(book["series_name"], book.get("author", ""))
-                    has_next = any(eb.get("series_volume") is not None and abs(float(eb["series_volume"]) - float(next_vol_candidate["series_volume"])) < 0.05 for eb in existing_series_books)
-                    if not has_next:
-                        st.markdown("---")
-                        add_next_wishlist = st.checkbox(
-                            f"🎁 Ajouter le Tome {next_vol_candidate['series_volume']:g} : « {next_vol_candidate['title']} » à ma Wishlist",
-                            value=True,
-                            help="Crée automatiquement le tome suivant réel dans votre Wishlist pour continuer la saga !"
-                        )
+            check_next = st.checkbox(
+                "🎁 Vérifier si le tome suivant existe pour l'ajouter à ma Wishlist",
+                value=False,
+                key=f"finish_chk_next_{book['id']}",
+                help="Recherche le tome suivant de la saga pour l'ajouter automatiquement à votre Wishlist."
+            )
+            if check_next:
+                cur_vol = float(book.get("series_volume") or 1.0)
+                with st.spinner("Recherche du tome suivant..."):
+                    next_vol_candidate = find_next_series_volume(book["series_name"], book.get("author", ""), cur_vol, book.get("title", ""))
+                if next_vol_candidate:
+                    if next_vol_candidate.get("is_published"):
+                        existing_series_books = get_books_by_series(book["series_name"], book.get("author", ""))
+                        has_next = any(eb.get("series_volume") is not None and abs(float(eb["series_volume"]) - float(next_vol_candidate["series_volume"])) < 0.05 for eb in existing_series_books)
+                        if not has_next:
+                            add_next_wishlist = True
+                            st.success(f"Tome {next_vol_candidate['series_volume']:g} trouvé : **« {next_vol_candidate['title']} »** (sera ajouté à votre Wishlist)")
+                        else:
+                            st.info(f"Le Tome {next_vol_candidate['series_volume']:g} : « {next_vol_candidate['title']} » est déjà dans votre collection.")
+                    else:
+                        st.caption(f"🟡 **Tome {next_vol_candidate['series_volume']:g} ({next_vol_candidate['title']})** : À paraître / non encore publié (non disponible).")
                 else:
-                    st.markdown("---")
-                    st.caption(f"🟡 **Tome {next_vol_candidate['series_volume']:g} ({next_vol_candidate['title']})** : À paraître / non encore publié (non disponible).")
-            else:
+                    st.caption("🏁 **Dernier tome répertorié :** Aucun tome suivant n'existe pour cette saga.")
                 st.markdown("---")
                 st.caption("🏁 **Dernier tome répertorié :** Aucun tome suivant n'existe pour cette saga.")
 
