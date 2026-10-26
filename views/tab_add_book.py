@@ -42,15 +42,20 @@ def render_tab_add_book():
         key="add_mode_radio"
     )
 
-    if input_mode.startswith("📷 Scanner"):
-        camera_active = st.toggle(
-            "📸 Allumer la caméra pour scanner",
-            value=st.session_state.get("camera_scan_active", False),
-            key="camera_scan_active",
-            help="Allume la caméra uniquement lorsque vous souhaitez scanner un code-barres."
-        )
+    if "camera_active" not in st.session_state:
+        st.session_state.camera_active = False
 
-        if camera_active:
+    if input_mode.startswith("📷 Scanner"):
+        if not st.session_state.camera_active:
+            if st.button("📸 Allumer la caméra pour scanner", type="primary", width="stretch", key="btn_turn_on_cam"):
+                st.session_state.camera_active = True
+                st.rerun()
+            st.info("📷 **La caméra est éteinte.** Cliquez sur le bouton ci-dessus pour allumer la caméra et scanner un livre.")
+        else:
+            if st.button("🛑 Éteindre la caméra", width="stretch", key="btn_turn_off_cam"):
+                st.session_state.camera_active = False
+                st.rerun()
+
             st.markdown(
                 '<div style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.85rem; color: #CBD5E1;">'
                 '📹 <b>Scan Vidéo & OCR ISBN en cours :</b> Pointez la caméra vers le code-barres arrière du livre.<br>'
@@ -66,11 +71,9 @@ def render_tab_add_book():
                     meta_res = enrich_book_metadata(scanned_code)
                     _apply_new_metadata(meta_res, scanned_code)
                 # Éteindre automatiquement la caméra une fois le code scanné
-                st.session_state.camera_scan_active = False
+                st.session_state.camera_active = False
                 st.toast(f"Livre « {meta_res.get('title', scanned_code)} » pré-rempli automatiquement ! 🎉")
                 st.rerun()
-        else:
-            st.info("📷 **La caméra est éteinte.** Activez l'interrupteur ci-dessus uniquement lorsque vous souhaitez scanner un livre.")
 
         if st.session_state.get("last_scanned_code"):
             col_sc1, col_sc2 = st.columns([3, 1])
@@ -78,10 +81,10 @@ def render_tab_add_book():
                 loaded_title = (st.session_state.scanned_metadata or {}).get("title", "")
                 st.success(f"✅ Dernier ISBN détecté : **{st.session_state.last_scanned_code}** — *{loaded_title}*")
             with col_sc2:
-                if st.button("🔄 Nouveau scan", width="stretch"):
+                if st.button("🔄 Nouveau scan", width="stretch", key="btn_new_scan"):
                     st.session_state.last_scanned_code = None
                     st.session_state.scanned_metadata = None
-                    st.session_state.camera_scan_active = True
+                    st.session_state.camera_active = True
                     st.session_state.form_fill_version += 1
                     st.rerun()
 
