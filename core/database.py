@@ -3,11 +3,19 @@ import json
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 
+import streamlit as st
 from sqlalchemy import (
     create_engine, Column, Integer, Float, String, Text, Boolean,
     DateTime, Date, ForeignKey, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, scoped_session
+
+def invalidate_cache():
+    """Invalide le cache Streamlit en mémoire lors de toute écriture en base."""
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 # Configuration de la base de données (SQLite en local ou PostgreSQL/Supabase en production)
 def get_database_url() -> str:
@@ -289,11 +297,14 @@ def add_book(data: Dict[str, Any]) -> int:
         session.add(book)
         session.commit()
         session.refresh(book)
-        return book.id
+        new_id = book.id
+        invalidate_cache()
+        return new_id
     finally:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_book(book_id: int) -> Optional[Dict[str, Any]]:
     """Récupère un livre par son ID."""
     session = SessionLocal()
@@ -304,6 +315,7 @@ def get_book(book_id: int) -> Optional[Dict[str, Any]]:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_all_books(
     status: Optional[str] = None,
     pal_month: Optional[str] = None,
@@ -386,6 +398,7 @@ def update_book(book_id: int, data: Dict[str, Any]) -> bool:
                 setattr(book, key, val)
 
         session.commit()
+        invalidate_cache()
         return True
     finally:
         session.close()
@@ -400,6 +413,7 @@ def delete_book(book_id: int) -> bool:
             return False
         session.delete(book)
         session.commit()
+        invalidate_cache()
         return True
     finally:
         session.close()
@@ -450,11 +464,14 @@ def add_reading_session(data: Dict[str, Any]) -> int:
 
         session.commit()
         session.refresh(reading_session)
-        return reading_session.id
+        new_id = reading_session.id
+        invalidate_cache()
+        return new_id
     finally:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_reading_sessions(
     book_id: Optional[int] = None,
     start_date: Optional[datetime] = None,
@@ -486,6 +503,7 @@ def delete_reading_session(session_id: int) -> bool:
             return False
         session.delete(s)
         session.commit()
+        invalidate_cache()
         return True
     finally:
         session.close()
@@ -510,11 +528,14 @@ def add_book_note(data: Dict[str, Any]) -> int:
         session.add(note)
         session.commit()
         session.refresh(note)
-        return note.id
+        new_id = note.id
+        invalidate_cache()
+        return new_id
     finally:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_book_notes(book_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """Récupère les notes associées à un livre (ou toutes les notes)."""
     session = SessionLocal()
@@ -538,11 +559,13 @@ def delete_book_note(note_id: int) -> bool:
             return False
         session.delete(note)
         session.commit()
+        invalidate_cache()
         return True
     finally:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_series_to_buy() -> List[Dict[str, Any]]:
     """
     Logique 'Suites de séries à acheter' :
@@ -583,6 +606,7 @@ def get_series_to_buy() -> List[Dict[str, Any]]:
         session.close()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_books_by_series(series_name: str, author: str = "") -> List[Dict[str, Any]]:
     """Récupère tous les livres d'une saga présents dans la base de données, triés par tome."""
     if not series_name:
