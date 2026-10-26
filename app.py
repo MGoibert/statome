@@ -113,49 +113,8 @@ init_db()
 
 
 def check_authentication() -> bool:
-    """Vérifie le code PIN ou mot de passe configuré dans st.secrets."""
-    app_pin = ""
-    try:
-        if "APP_PIN" in st.secrets and st.secrets["APP_PIN"]:
-            app_pin = str(st.secrets["APP_PIN"]).strip()
-        elif "APP_PASSWORD" in st.secrets and st.secrets["APP_PASSWORD"]:
-            app_pin = str(st.secrets["APP_PASSWORD"]).strip()
-    except Exception:
-        pass
-
-    # Si aucun code PIN n'est défini, accès libre
-    if not app_pin:
-        return True
-
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-
-    if st.session_state.authenticated:
-        return True
-
-    # Écran de verrouillage tactile
-    auth_html = (
-        '<div style="text-align: center; margin-top: 40px; margin-bottom: 20px;">'
-        '<div style="font-size: 3.5rem;">🔒</div>'
-        '<h2>Accès Personnel Sécurisé</h2>'
-        '<p style="color: #94A3B8;">Veuillez saisir votre code PIN pour ouvrir votre suivi de lecture.</p>'
-        '</div>'
-    )
-    st.markdown(auth_html, unsafe_allow_html=True)
-
-    with st.form("auth_form"):
-        pin_input = st.text_input("Code PIN", type="password", placeholder="••••", label_visibility="collapsed")
-        unlock_btn = st.form_submit_button("Déverrouiller", width="stretch", type="primary")
-
-        if unlock_btn:
-            if pin_input.strip() == app_pin:
-                st.session_state.authenticated = True
-                st.success("Accès autorisé !")
-                st.rerun()
-            else:
-                st.error("Code PIN incorrect.")
-
-    return False
+    """Accès direct instantané sans code PIN."""
+    return True
 
 
 def main():

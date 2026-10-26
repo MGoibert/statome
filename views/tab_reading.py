@@ -14,7 +14,8 @@ from core.metadata_fetcher import find_next_series_volume, infer_book_series
 from core.database import (
     get_all_books, get_book, update_book, add_reading_session,
     add_book_note, get_reading_sessions, get_book_notes,
-    get_books_by_series, add_series_next_volume_to_wishlist
+    get_books_by_series, add_series_next_volume_to_wishlist,
+    get_active_timer, save_active_timer, clear_active_timer
 )
 
 
@@ -255,15 +256,20 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
 def render_tab_reading():
     st.markdown("### 📖 Lecture en cours & Chronomètre")
 
-    # Initialisation de l'état du chronomètre
-    if "timer_running" not in st.session_state:
-        st.session_state.timer_running = False
-    if "timer_start_time" not in st.session_state:
-        st.session_state.timer_start_time = None
-    if "timer_accumulated" not in st.session_state:
-        st.session_state.timer_accumulated = 0.0
-    if "timer_book_id" not in st.session_state:
-        st.session_state.timer_book_id = None
+    # Initialisation & Synchronisation du chronomètre avec la base (persiste à la mise en veille)
+    if "timer_initialized" not in st.session_state:
+        st.session_state.timer_initialized = True
+        persisted = get_active_timer()
+        if persisted:
+            st.session_state.timer_running = persisted["is_running"]
+            st.session_state.timer_start_time = persisted["start_time"]
+            st.session_state.timer_accumulated = persisted["accumulated_seconds"]
+            st.session_state.timer_book_id = persisted["book_id"]
+        else:
+            st.session_state.timer_running = False
+            st.session_state.timer_start_time = None
+            st.session_state.timer_accumulated = 0.0
+            st.session_state.timer_book_id = None
     if "session_saved_state" not in st.session_state:
         st.session_state.session_saved_state = None
     if "active_reading_dialog" not in st.session_state:
@@ -413,12 +419,14 @@ def render_tab_reading():
                 st.session_state.timer_running = True
                 st.session_state.timer_start_time = time.time()
                 st.session_state.timer_book_id = book["id"]
+                save_active_timer(book["id"], True, st.session_state.timer_start_time, st.session_state.timer_accumulated)
                 st.rerun()
         else:
             if st.button("⏸️ Pause", width="stretch"):
                 st.session_state.timer_running = False
                 st.session_state.timer_accumulated += (time.time() - st.session_state.timer_start_time)
                 st.session_state.timer_start_time = None
+                save_active_timer(book["id"], False, None, st.session_state.timer_accumulated)
                 st.rerun()
 
     with col_btn2:
@@ -427,6 +435,7 @@ def render_tab_reading():
                 st.session_state.timer_accumulated += (time.time() - st.session_state.timer_start_time)
                 st.session_state.timer_running = False
                 st.session_state.timer_start_time = None
+            save_active_timer(book["id"], False, None, st.session_state.timer_accumulated)
             st.session_state.session_saved_state = {
                 "duration_minutes": max(round(st.session_state.timer_accumulated / 60.0, 2), 1.0),
                 "book_id": book["id"],
@@ -469,6 +478,7 @@ def render_tab_reading():
                     "start_page": current_page,
                     "end_page": int(new_p)
                 })
+                clear_active_timer()
                 st.session_state.timer_running = False
                 st.session_state.timer_start_time = None
                 st.session_state.timer_accumulated = 0.0
@@ -477,6 +487,9 @@ def render_tab_reading():
                 st.rerun()
 
             if cancel_btn:
+                clear_active_timer()
+                st.session_state.timer_running = False
+                st.session_state.timer_start_time = None
                 st.session_state.timer_accumulated = 0.0
                 st.session_state.session_saved_state = None
                 st.rerun()

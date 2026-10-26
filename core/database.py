@@ -216,6 +216,17 @@ class BookNote(Base):
         }
 
 
+class ActiveTimer(Base):
+    __tablename__ = "active_timer"
+
+    id = Column(Integer, primary_key=True)
+    book_id = Column(Integer, nullable=True)
+    is_running = Column(Boolean, default=False)
+    start_time = Column(Float, nullable=True)  # Timestamp unix
+    accumulated_seconds = Column(Float, default=0.0)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 @st.cache_resource
 def init_db():
     """Initialise les tables de la base de données et applique les migrations douces."""
@@ -690,3 +701,58 @@ def add_series_next_volume_to_wishlist(book_id: int, target_status: str = "Wishl
         "page_count": next_vol_info.get("num_pages") or book.get("page_count", 300)
     }
     return add_book(payload)
+
+
+# ==========================================
+# Gestion de la Persistance du Chronomètre
+# ==========================================
+
+def get_active_timer() -> Optional[Dict[str, Any]]:
+    """Récupère l'état du chronomètre actif en base de données."""
+    session = SessionLocal()
+    try:
+        t = session.query(ActiveTimer).filter(ActiveTimer.id == 1).first()
+        if not t or (not t.is_running and float(t.accumulated_seconds or 0) <= 0):
+            return None
+        return {
+            "book_id": t.book_id,
+            "is_running": bool(t.is_running),
+            "start_time": float(t.start_time) if t.start_time is not None else None,
+            "accumulated_seconds": float(t.accumulated_seconds or 0.0)
+        }
+    finally:
+        session.close()
+
+
+def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float], accumulated_seconds: float):
+    """Enregistre ou met à jour l'état du chronomètre en base de données."""
+    session = SessionLocal()
+    try:
+        t = session.query(ActiveTimer).filter(ActiveTimer.id == 1).first()
+        if not t:
+            t = ActiveTimer(id=1)
+            session.add(t)
+        t.book_id = book_id
+        t.is_running = is_running
+        t.start_time = start_time
+        t.accumulated_seconds = accumulated_seconds
+        t.updated_at = datetime.utcnow()
+        session.commit()
+    finally:
+        session.close()
+
+
+def clear_active_timer():
+    """Réinitialise le chronomètre en base de données après validation ou annulation."""
+    session = SessionLocal()
+    try:
+        t = session.query(ActiveTimer).filter(ActiveTimer.id == 1).first()
+        if t:
+            t.is_running = False
+            t.start_time = None
+            t.accumulated_seconds = 0.0
+            t.book_id = None
+            t.updated_at = datetime.utcnow()
+            session.commit()
+    finally:
+        session.close()
