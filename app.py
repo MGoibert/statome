@@ -8,7 +8,7 @@ import streamlit as st
 # Configuration de la page Streamlit (optimisée pour mobile)
 st.set_page_config(
     page_title="Statome",
-    page_icon="📖",
+    page_icon="assets/logo.png",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
