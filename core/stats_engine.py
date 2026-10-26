@@ -39,13 +39,6 @@ PLOTLY_LAYOUT_DEFAULTS = dict(
         xanchor="center",
         x=0.5,
         font=dict(size=10)
-    ),
-    title=dict(
-        font=dict(size=13, color=COLOR_TEXT),
-        x=0.5,
-        xanchor="center",
-        y=0.98,
-        yanchor="top"
     )
 )
 
@@ -282,7 +275,7 @@ def plot_daily_reading_activity(sessions: List[Dict[str, Any]], days_limit: int 
     """Graphique en barres : Pages lues et temps passé par jour avec livres lus au survol."""
     if not sessions:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucune session de lecture")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucune session de lecture", x=0.5, xanchor="center"))
         return fig
 
     df = pd.DataFrame(sessions)
@@ -422,7 +415,7 @@ def plot_genres_distribution(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not genre_to_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucun genre renseigné")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucun genre renseigné", x=0.5, xanchor="center"))
         return fig
 
     # Top 10 genres triés par count croissant pour l'affichage bar horizontal
@@ -605,7 +598,7 @@ def plot_author_countries(books: List[Dict[str, Any]]) -> go.Figure:
 
     if not country_to_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucune donnée de nationalité")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucune donnée de nationalité", x=0.5, xanchor="center"))
         return fig
 
     countries = []
@@ -761,7 +754,7 @@ def plot_radar_ratings(books: List[Dict[str, Any]]) -> go.Figure:
     
     if not rated_books:
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title="Aucun livre évalué pour le radar")
+        fig.update_layout(**PLOTLY_LAYOUT_DEFAULTS, title=dict(text="Aucun livre évalué pour le radar", x=0.5, xanchor="center"))
         return fig
 
     pacing_avg = np.nanmean([b.get("rating_pacing") for b in rated_books if b.get("rating_pacing") is not None] or [0])
