@@ -26,7 +26,7 @@ st.markdown(
         max-width: 800px;
     }
 
-    /* Style des onglets */
+    /* Style des onglets et segmented control */
     .stTabs [data-baseweb="tab-list"] {
         gap: 6px;
         background-color: #1E293B;
@@ -47,6 +47,18 @@ st.markdown(
     .stTabs [aria-selected="true"] {
         background-color: #6366F1 !important;
         color: #FFFFFF !important;
+    }
+
+    /* Style du contrôle segmenté de navigation principale */
+    div[data-testid="stSegmentedControl"] {
+        margin-bottom: 16px;
+    }
+    div[data-testid="stSegmentedControl"] button {
+        font-weight: 700 !important;
+        font-size: 0.92rem !important;
+        border-radius: 10px !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
     }
 
     /* Boutons larges tactiles */
@@ -163,24 +175,29 @@ def main():
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
-    # Navigation principale par onglets
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📖 Lecture",
-        "➕ Ajouter",
-        "📚 Bibliothèque",
-        "📊 Statistiques"
-    ])
+    # Navigation principale par segmented control (Lazy Loading instantané)
+    selected_tab = st.segmented_control(
+        "Navigation principale",
+        options=[
+            "📖 Lecture",
+            "➕ Ajouter",
+            "📚 Bibliothèque",
+            "📊 Statistiques"
+        ],
+        default="📖 Lecture",
+        key="main_nav_tab",
+        label_visibility="collapsed",
+        width="stretch",
+        required=True
+    )
 
-    with tab1:
+    if selected_tab == "📖 Lecture":
         render_tab_reading()
-
-    with tab2:
+    elif selected_tab == "➕ Ajouter":
         render_tab_add_book()
-
-    with tab3:
+    elif selected_tab == "📚 Bibliothèque":
         render_tab_library()
-
-    with tab4:
+    elif selected_tab == "📊 Statistiques":
         render_tab_stats()
 
 

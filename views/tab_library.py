@@ -516,6 +516,7 @@ def dialog_book_detail(book_id: int):
             st.rerun()
 
 
+@st.fragment
 def render_tab_library():
     st.markdown("### 📚 Votre Bibliothèque & PAL")
 
