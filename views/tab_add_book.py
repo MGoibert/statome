@@ -34,40 +34,54 @@ def render_tab_add_book():
     if "form_fill_version" not in st.session_state:
         st.session_state.form_fill_version = 0
 
-    # Sélection du mode d'acquisition
+    # Sélection du mode d'acquisition (Recherche par défaut pour ne pas allumer la caméra)
     input_mode = st.radio(
         "Mode d'acquisition :",
-        ["📷 Scanner le code-barres (Vidéo)", "🔍 Recherche ISBN / Titre"],
+        ["🔍 Recherche ISBN / Titre", "📷 Scanner le code-barres (Vidéo)"],
         horizontal=True,
         key="add_mode_radio"
     )
 
     if input_mode.startswith("📷 Scanner"):
-        st.markdown(
-            '<div style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.85rem; color: #CBD5E1;">'
-            '📹 <b>Scan Vidéo & OCR ISBN Continu :</b> Pointez la caméra vers le code-barres arrière du livre.<br>'
-            'La détection (barres 1D ou texte ISBN imprimé) et le remplissage de tous les champs s\'effectuent <b>automatiquement en direct</b> !'
-            '</div>',
-            unsafe_allow_html=True
+        camera_active = st.toggle(
+            "📸 Allumer la caméra pour scanner",
+            value=st.session_state.get("camera_scan_active", False),
+            key="camera_scan_active",
+            help="Allume la caméra uniquement lorsque vous souhaitez scanner un code-barres."
         )
 
-        scanned_code = render_live_video_scanner(key="live_barcode_video_scanner")
+        if camera_active:
+            st.markdown(
+                '<div style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.85rem; color: #CBD5E1;">'
+                '📹 <b>Scan Vidéo & OCR ISBN en cours :</b> Pointez la caméra vers le code-barres arrière du livre.<br>'
+                'La détection et le remplissage de tous les champs s\'effectuent <b>automatiquement en direct</b> !'
+                '</div>',
+                unsafe_allow_html=True
+            )
 
-        if scanned_code and scanned_code != st.session_state.get("last_scanned_code"):
-            with st.spinner(f"ISBN {scanned_code} détecté ! Récupération automatique des informations du livre..."):
-                meta_res = enrich_book_metadata(scanned_code)
-                _apply_new_metadata(meta_res, scanned_code)
-            st.toast(f"Livre « {meta_res.get('title', scanned_code)} » pré-rempli automatiquement ! 🎉")
+            scanned_code = render_live_video_scanner(key="live_barcode_video_scanner")
+
+            if scanned_code and scanned_code != st.session_state.get("last_scanned_code"):
+                with st.spinner(f"ISBN {scanned_code} détecté ! Récupération automatique des informations du livre..."):
+                    meta_res = enrich_book_metadata(scanned_code)
+                    _apply_new_metadata(meta_res, scanned_code)
+                # Éteindre automatiquement la caméra une fois le code scanné
+                st.session_state.camera_scan_active = False
+                st.toast(f"Livre « {meta_res.get('title', scanned_code)} » pré-rempli automatiquement ! 🎉")
+                st.rerun()
+        else:
+            st.info("📷 **La caméra est éteinte.** Activez l'interrupteur ci-dessus uniquement lorsque vous souhaitez scanner un livre.")
 
         if st.session_state.get("last_scanned_code"):
             col_sc1, col_sc2 = st.columns([3, 1])
             with col_sc1:
                 loaded_title = (st.session_state.scanned_metadata or {}).get("title", "")
-                st.success(f"✅ ISBN détecté : **{st.session_state.last_scanned_code}** — *{loaded_title}*")
+                st.success(f"✅ Dernier ISBN détecté : **{st.session_state.last_scanned_code}** — *{loaded_title}*")
             with col_sc2:
                 if st.button("🔄 Nouveau scan", width="stretch"):
                     st.session_state.last_scanned_code = None
                     st.session_state.scanned_metadata = None
+                    st.session_state.camera_scan_active = True
                     st.session_state.form_fill_version += 1
                     st.rerun()
 
