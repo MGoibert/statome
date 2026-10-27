@@ -180,10 +180,15 @@ def dialog_manual_session(book: dict):
 
 def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp: Optional[float]):
     """Composant chronomètre dynamique en temps réel côté client (JS)."""
-    start_ms = int(start_timestamp * 1000) if (is_running and start_timestamp) else 0
-    accum_sec = int(accumulated_sec)
-    color = '#34D399' if is_running else ('#F59E0B' if accum_sec > 0 else '#94A3B8')
-    sub_text = '🟢 Chrono en direct (lecture active)' if is_running else ('🟡 Chronomètre en pause' if accum_sec > 0 else '⚪ En attente de démarrage')
+    now_ts = time.time()
+    base_sec = int(accumulated_sec + (max(0.0, now_ts - start_timestamp) if (is_running and start_timestamp) else 0.0))
+    h_init = base_sec // 3600
+    m_init = (base_sec % 3600) // 60
+    s_init = base_sec % 60
+    init_str = f"{h_init:02d}:{m_init:02d}:{s_init:02d}" if h_init > 0 else f"{m_init:02d}:{s_init:02d}"
+
+    color = '#34D399' if is_running else ('#F59E0B' if base_sec > 0 else '#94A3B8')
+    sub_text = '🟢 Chrono en direct (lecture active)' if is_running else ('🟡 Chronomètre en pause — Prêt à reprendre ou valider' if base_sec > 0 else '⚪ En attente de démarrage')
 
     html_code = f"""
     <!DOCTYPE html>
@@ -215,12 +220,12 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
     </style>
     </head>
     <body>
-      <div id="timer-box">00:00</div>
+      <div id="timer-box">{init_str}</div>
       <div id="timer-sub">{sub_text}</div>
       <script>
         const isRunning = {'true' if is_running else 'false'};
-        const accumSec = {accum_sec};
-        const startMs = {start_ms};
+        const baseSec = {base_sec};
+        const loadMs = Date.now();
 
         function formatTime(totalSec) {{
           const h = Math.floor(totalSec / 3600);
@@ -234,9 +239,9 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
         }}
 
         function tick() {{
-          let cur = accumSec;
-          if (isRunning && startMs > 0) {{
-            const diff = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+          let cur = baseSec;
+          if (isRunning) {{
+            const diff = Math.max(0, Math.floor((Date.now() - loadMs) / 1000));
             cur += diff;
           }}
           document.getElementById('timer-box').innerText = formatTime(cur);
@@ -245,6 +250,9 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
         tick();
         if (isRunning) {{
           setInterval(tick, 1000);
+          document.addEventListener('visibilitychange', () => {{
+            if (!document.hidden) tick();
+          }});
         }}
       </script>
     </body>
@@ -256,22 +264,19 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
 def render_tab_reading():
     st.markdown("### 📖 Lecture en cours & Chronomètre")
 
-    # Initialisation & Synchronisation du chronomètre avec la base (persiste à la mise en veille)
-    if "timer_initialized" not in st.session_state:
-        st.session_state.timer_initialized = True
-        persisted = get_active_timer()
-        if persisted:
-            st.session_state.timer_running = persisted["is_running"]
-            st.session_state.timer_start_time = persisted["start_time"]
-            st.session_state.timer_accumulated = persisted["accumulated_seconds"]
-            st.session_state.timer_book_id = persisted["book_id"]
-        else:
-            st.session_state.timer_running = False
-            st.session_state.timer_start_time = None
-            st.session_state.timer_accumulated = 0.0
-            st.session_state.timer_book_id = None
-    if "session_saved_state" not in st.session_state:
-        st.session_state.session_saved_state = None
+    # Synchronisation systématique avec la base (cache mémoire 0ms + survie garantie à la mise en veille)
+    persisted = get_active_timer()
+    if persisted:
+        st.session_state.timer_running = persisted["is_running"]
+        st.session_state.timer_start_time = persisted["start_time"]
+        st.session_state.timer_accumulated = persisted["accumulated_seconds"]
+        st.session_state.timer_book_id = persisted["book_id"]
+    else:
+        st.session_state.timer_running = False
+        st.session_state.timer_start_time = None
+        st.session_state.timer_accumulated = 0.0
+        st.session_state.timer_book_id = None
+
     if "active_reading_dialog" not in st.session_state:
         st.session_state.active_reading_dialog = None
 
@@ -407,53 +412,53 @@ def render_tab_reading():
         start_timestamp=st.session_state.timer_start_time
     )
 
-    current_elapsed = st.session_state.timer_accumulated
-    if st.session_state.timer_running and st.session_state.timer_start_time:
-        current_elapsed += (time.time() - st.session_state.timer_start_time)
-
     col_btn1, col_btn2, col_btn3 = st.columns(3)
     
     with col_btn1:
         if not st.session_state.timer_running:
-            if st.button("▶️ Démarrer", width="stretch", type="primary"):
+            start_label = "▶️ Reprendre" if st.session_state.timer_accumulated > 0 else "▶️ Démarrer"
+            if st.button(start_label, key="btn_timer_start", width="stretch", type="primary"):
+                now_ts = time.time()
+                save_active_timer(book["id"], True, now_ts, st.session_state.timer_accumulated)
                 st.session_state.timer_running = True
-                st.session_state.timer_start_time = time.time()
+                st.session_state.timer_start_time = now_ts
                 st.session_state.timer_book_id = book["id"]
-                save_active_timer(book["id"], True, st.session_state.timer_start_time, st.session_state.timer_accumulated)
                 st.rerun()
         else:
-            if st.button("⏸️ Pause", width="stretch"):
+            if st.button("⏸️ Pause", key="btn_timer_pause", width="stretch"):
+                elapsed = max(1.0, time.time() - st.session_state.timer_start_time) if st.session_state.timer_start_time else 0.0
+                new_accum = st.session_state.timer_accumulated + elapsed
+                save_active_timer(book["id"], False, None, new_accum)
                 st.session_state.timer_running = False
-                st.session_state.timer_accumulated += (time.time() - st.session_state.timer_start_time)
+                st.session_state.timer_accumulated = new_accum
                 st.session_state.timer_start_time = None
-                save_active_timer(book["id"], False, None, st.session_state.timer_accumulated)
                 st.rerun()
 
     with col_btn2:
-        if st.button("⏹️ Terminer", width="stretch", disabled=(current_elapsed < 1)):
-            if st.session_state.timer_running:
-                st.session_state.timer_accumulated += (time.time() - st.session_state.timer_start_time)
-                st.session_state.timer_running = False
-                st.session_state.timer_start_time = None
-            save_active_timer(book["id"], False, None, st.session_state.timer_accumulated)
-            st.session_state.session_saved_state = {
-                "duration_minutes": max(round(st.session_state.timer_accumulated / 60.0, 2), 1.0),
-                "book_id": book["id"],
-                "start_page": current_page
-            }
+        can_stop = st.session_state.timer_running or (st.session_state.timer_accumulated > 0)
+        if st.button("⏹️ Terminer", key="btn_timer_stop", width="stretch", disabled=not can_stop):
+            new_accum = st.session_state.timer_accumulated
+            if st.session_state.timer_running and st.session_state.timer_start_time:
+                new_accum += max(1.0, time.time() - st.session_state.timer_start_time)
+            save_active_timer(book["id"], False, None, new_accum)
+            st.session_state.timer_running = False
+            st.session_state.timer_accumulated = new_accum
+            st.session_state.timer_start_time = None
             st.rerun()
 
     with col_btn3:
-        if st.button("➕ Manuel", width="stretch", help="Ajouter une session lue hors chrono"):
+        if st.button("➕ Manuel", key="btn_timer_manual", width="stretch", help="Ajouter une session lue hors chrono"):
             st.session_state.active_reading_dialog = "manual"
             st.rerun()
 
-    # Mini formulaire de validation post-chrono
-    if st.session_state.session_saved_state and st.session_state.session_saved_state.get("book_id") == book["id"]:
+    # Mini formulaire de validation post-chrono (affiché dès que le chrono est en pause/arrêté avec du temps accumulé)
+    if not st.session_state.timer_running and st.session_state.timer_accumulated > 0:
         st.markdown("---")
         st.markdown("##### 📝 Validation de la session de lecture")
-        dur = st.session_state.session_saved_state["duration_minutes"]
-        st.info(f"Durée mesurée : **{dur:.2f} min** | Page de départ : **{current_page}**")
+        dur = max(round(st.session_state.timer_accumulated / 60.0, 2), 0.1)
+        mins_int = int(st.session_state.timer_accumulated // 60)
+        secs_int = int(st.session_state.timer_accumulated % 60)
+        st.info(f"Durée mesurée : **{mins_int:02d}m {secs_int:02d}s** ({dur:.2f} min) | Page de départ : **{current_page}** — *Vous pouvez reprendre le chrono avec ▶️ Reprendre ou enregistrer la session ci-dessous.*")
 
         with st.form("validate_session_form"):
             new_p = st.number_input(
@@ -466,7 +471,7 @@ def render_tab_reading():
             with col_val:
                 confirm_btn = st.form_submit_button("✅ Enregistrer la session", type="primary", width="stretch")
             with col_cancel:
-                cancel_btn = st.form_submit_button("Annuler", width="stretch")
+                cancel_btn = st.form_submit_button("🗑️ Réinitialiser à 0", width="stretch")
 
             if confirm_btn:
                 now_dt = datetime.now()
@@ -474,7 +479,7 @@ def render_tab_reading():
                     "book_id": book["id"],
                     "start_time": now_dt,
                     "end_time": now_dt,
-                    "duration_minutes": dur,
+                    "duration_minutes": max(dur, 1.0),
                     "start_page": current_page,
                     "end_page": int(new_p)
                 })
@@ -482,8 +487,7 @@ def render_tab_reading():
                 st.session_state.timer_running = False
                 st.session_state.timer_start_time = None
                 st.session_state.timer_accumulated = 0.0
-                st.session_state.session_saved_state = None
-                st.success(f"Session de {dur:.2f} min enregistrée ! Page actuelle : {new_p}")
+                st.success(f"Session enregistrée ! Page actuelle : {new_p}")
                 st.rerun()
 
             if cancel_btn:
@@ -491,7 +495,6 @@ def render_tab_reading():
                 st.session_state.timer_running = False
                 st.session_state.timer_start_time = None
                 st.session_state.timer_accumulated = 0.0
-                st.session_state.session_saved_state = None
                 st.rerun()
 
     # ==========================================

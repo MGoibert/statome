@@ -53,8 +53,8 @@ def get_engine():
         )
     return create_engine(
         DATABASE_URL,
-        pool_recycle=300,
-        pool_pre_ping=False,
+        pool_recycle=240,
+        pool_pre_ping=True,
         pool_size=5,
         max_overflow=10
     )
@@ -707,6 +707,7 @@ def add_series_next_volume_to_wishlist(book_id: int, target_status: str = "Wishl
 # Gestion de la Persistance du Chronomètre
 # ==========================================
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_active_timer() -> Optional[Dict[str, Any]]:
     """Récupère l'état du chronomètre actif en base de données."""
     session = SessionLocal()
@@ -720,6 +721,10 @@ def get_active_timer() -> Optional[Dict[str, Any]]:
             "start_time": float(t.start_time) if t.start_time is not None else None,
             "accumulated_seconds": float(t.accumulated_seconds or 0.0)
         }
+    except Exception:
+        session.rollback()
+        Base.metadata.create_all(bind=engine)
+        return None
     finally:
         session.close()
 
@@ -733,13 +738,27 @@ def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float
             t = ActiveTimer(id=1)
             session.add(t)
         t.book_id = book_id
-        t.is_running = is_running
-        t.start_time = start_time
-        t.accumulated_seconds = accumulated_seconds
+        t.is_running = bool(is_running)
+        t.start_time = float(start_time) if start_time is not None else None
+        t.accumulated_seconds = float(accumulated_seconds or 0.0)
         t.updated_at = datetime.utcnow()
+        session.commit()
+    except Exception:
+        session.rollback()
+        Base.metadata.create_all(bind=engine)
+        t = ActiveTimer(
+            id=1,
+            book_id=book_id,
+            is_running=bool(is_running),
+            start_time=float(start_time) if start_time is not None else None,
+            accumulated_seconds=float(accumulated_seconds or 0.0),
+            updated_at=datetime.utcnow()
+        )
+        session.merge(t)
         session.commit()
     finally:
         session.close()
+        get_active_timer.clear()
 
 
 def clear_active_timer():
@@ -754,5 +773,8 @@ def clear_active_timer():
             t.book_id = None
             t.updated_at = datetime.utcnow()
             session.commit()
+    except Exception:
+        session.rollback()
     finally:
         session.close()
+        get_active_timer.clear()
