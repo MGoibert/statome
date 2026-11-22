@@ -1,0 +1,18 @@
+{
+  "name": "StatOme — Suivi de Lecture",
+  "short_name": "StatOme",
+  "description": "Tracker de lecture personnel rapide, mode Zen Focus & Détente",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#0F172A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234F46E5'/><text y='.9em' x='50%' text-anchor='middle' font-size='62'>📖</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

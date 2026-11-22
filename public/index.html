@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0F172A" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="StatOme" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
+  <title>StatOme — Suivi de Lecture</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span>📖</span>
+      <span>StatOme</span>
+    </div>
+    <div class="sync-badge" id="sync-badge" onclick="window.syncFromServer(true)" style="cursor:pointer;" title="Cliquer pour rafraîchir">
+      <span class="sync-dot" id="sync-dot"></span>
+      <span id="sync-text">Prêt</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="view-reading"></section>
+    <section id="view-library" style="display:none;"></section>
+    <section id="view-add" style="display:none;"></section>
+    <section id="view-stats" style="display:none;"></section>
+  </main>
+
+  <dialog id="app-modal">
+    <div id="modal-content"></div>
+  </dialog>
+
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="reading" onclick="window.switchTab('reading')">
+      <span class="nav-icon">📖</span>
+      <span>Lecture</span>
+    </button>
+    <button class="nav-item" data-tab="library" onclick="window.switchTab('library')">
+      <span class="nav-icon">📚</span>
+      <span>Biblio</span>
+    </button>
+    <button class="nav-item" data-tab="add" onclick="window.switchTab('add')">
+      <span class="nav-icon">➕</span>
+      <span>Ajouter</span>
+    </button>
+    <button class="nav-item" data-tab="stats" onclick="window.switchTab('stats')">
+      <span class="nav-icon">📊</span>
+      <span>Stats</span>
+    </button>
+  </nav>
+
+  <script src="/app.js"></script>
+</body>
+</html>

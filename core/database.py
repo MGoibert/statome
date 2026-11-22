@@ -19,7 +19,30 @@ def invalidate_cache():
 
 # Configuration de la base de données (SQLite en local ou PostgreSQL/Supabase en production)
 def get_database_url() -> str:
-    # 1. Tentative de lecture depuis st.secrets (Streamlit)
+    # 1. Variable d'environnement
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url:
+        if env_url.startswith("postgres://"):
+            env_url = env_url.replace("postgres://", "postgresql://", 1)
+        return env_url
+
+    # 2. Lecture directe depuis .streamlit/secrets.toml (fonctionne avec ou sans Streamlit)
+    try:
+        import tomllib
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        secrets_path = os.path.join(root_dir, ".streamlit", "secrets.toml")
+        if os.path.exists(secrets_path):
+            with open(secrets_path, "rb") as f:
+                data = tomllib.load(f)
+                if "DATABASE_URL" in data and data["DATABASE_URL"]:
+                    url = data["DATABASE_URL"]
+                    if url.startswith("postgres://"):
+                        url = url.replace("postgres://", "postgresql://", 1)
+                    return url
+    except Exception:
+        pass
+
+    # 3. Tentative de lecture depuis st.secrets (Streamlit Cloud)
     try:
         import streamlit as st
         if "DATABASE_URL" in st.secrets:
@@ -30,14 +53,7 @@ def get_database_url() -> str:
     except Exception:
         pass
 
-    # 2. Variable d'environnement
-    env_url = os.environ.get("DATABASE_URL")
-    if env_url:
-        if env_url.startswith("postgres://"):
-            env_url = env_url.replace("postgres://", "postgresql://", 1)
-        return env_url
-
-    # 3. Base locale SQLite par défaut
+    # 4. Base locale SQLite par défaut
     db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reading_tracker.db")
     return f"sqlite:///{db_path}"
 
@@ -170,6 +186,7 @@ class ReadingSession(Base):
     pages_read = Column(Integer, nullable=False)
     pages_per_hour = Column(Float, nullable=False)
     is_weekend = Column(Boolean, nullable=False)
+    is_focused = Column(Boolean, nullable=False, default=True)
 
     book = relationship("Book", back_populates="sessions")
 
@@ -186,7 +203,8 @@ class ReadingSession(Base):
             "end_page": self.end_page,
             "pages_read": self.pages_read,
             "pages_per_hour": round(self.pages_per_hour, 1),
-            "is_weekend": self.is_weekend
+            "is_weekend": self.is_weekend,
+            "is_focused": True if self.is_focused is None else bool(self.is_focused)
         }
 
 
@@ -224,6 +242,7 @@ class ActiveTimer(Base):
     is_running = Column(Boolean, default=False)
     start_time = Column(Float, nullable=True)  # Timestamp unix
     accumulated_seconds = Column(Float, default=0.0)
+    is_focused = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -234,13 +253,21 @@ def init_db():
     try:
         with engine.begin() as conn:
             if DATABASE_URL.startswith("sqlite"):
-                cols = [row[1] for row in conn.execute(text("PRAGMA table_info(books)")).fetchall()]
-                if "fantasy_subgenre" not in cols:
+                cols_b = [row[1] for row in conn.execute(text("PRAGMA table_info(books)")).fetchall()]
+                if "fantasy_subgenre" not in cols_b:
                     conn.execute(text("ALTER TABLE books ADD COLUMN fantasy_subgenre VARCHAR(100)"))
+                cols_s = [row[1] for row in conn.execute(text("PRAGMA table_info(reading_sessions)")).fetchall()]
+                if "is_focused" not in cols_s:
+                    conn.execute(text("ALTER TABLE reading_sessions ADD COLUMN is_focused BOOLEAN DEFAULT 1"))
+                cols_t = [row[1] for row in conn.execute(text("PRAGMA table_info(active_timer)")).fetchall()]
+                if "is_focused" not in cols_t:
+                    conn.execute(text("ALTER TABLE active_timer ADD COLUMN is_focused BOOLEAN DEFAULT 1"))
             else:
                 conn.execute(text("ALTER TABLE books ADD COLUMN IF NOT EXISTS fantasy_subgenre VARCHAR(100)"))
+                conn.execute(text("ALTER TABLE reading_sessions ADD COLUMN IF NOT EXISTS is_focused BOOLEAN DEFAULT TRUE"))
+                conn.execute(text("ALTER TABLE active_timer ADD COLUMN IF NOT EXISTS is_focused BOOLEAN DEFAULT TRUE"))
     except Exception as e:
-        print(f"Migration note (fantasy_subgenre): {e}")
+        print(f"Migration note: {e}")
 
 
 # ==========================================
@@ -462,6 +489,7 @@ def add_reading_session(data: Dict[str, Any]) -> int:
 
         # Vérifie si samedi (5) ou dimanche (6)
         is_weekend = start_time.weekday() in (5, 6)
+        is_focused = bool(data.get("is_focused", True))
 
         reading_session = ReadingSession(
             book_id=book_id,
@@ -472,7 +500,8 @@ def add_reading_session(data: Dict[str, Any]) -> int:
             end_page=end_page,
             pages_read=pages_read,
             pages_per_hour=pages_per_hour,
-            is_weekend=is_weekend
+            is_weekend=is_weekend,
+            is_focused=is_focused
         )
         session.add(reading_session)
 
@@ -719,7 +748,8 @@ def get_active_timer() -> Optional[Dict[str, Any]]:
             "book_id": t.book_id,
             "is_running": bool(t.is_running),
             "start_time": float(t.start_time) if t.start_time is not None else None,
-            "accumulated_seconds": float(t.accumulated_seconds or 0.0)
+            "accumulated_seconds": float(t.accumulated_seconds or 0.0),
+            "is_focused": True if t.is_focused is None else bool(t.is_focused)
         }
     except Exception:
         session.rollback()
@@ -729,7 +759,7 @@ def get_active_timer() -> Optional[Dict[str, Any]]:
         session.close()
 
 
-def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float], accumulated_seconds: float):
+def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float], accumulated_seconds: float, is_focused: bool = True):
     """Enregistre ou met à jour l'état du chronomètre en base de données."""
     session = SessionLocal()
     try:
@@ -741,6 +771,7 @@ def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float
         t.is_running = bool(is_running)
         t.start_time = float(start_time) if start_time is not None else None
         t.accumulated_seconds = float(accumulated_seconds or 0.0)
+        t.is_focused = bool(is_focused)
         t.updated_at = datetime.utcnow()
         session.commit()
     except Exception:
@@ -752,6 +783,7 @@ def save_active_timer(book_id: int, is_running: bool, start_time: Optional[float
             is_running=bool(is_running),
             start_time=float(start_time) if start_time is not None else None,
             accumulated_seconds=float(accumulated_seconds or 0.0),
+            is_focused=bool(is_focused),
             updated_at=datetime.utcnow()
         )
         session.merge(t)

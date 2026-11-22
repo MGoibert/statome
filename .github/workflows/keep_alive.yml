@@ -1,0 +1,22 @@
+name: Keep StatOme Awake
+
+on:
+  schedule:
+    # Exécute toutes les 25 minutes entre 06h00 et 23h00 UTC pour éviter la mise en veille
+    - cron: "*/25 6-23 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping application URL if configured
+        env:
+          APP_URL: ${{ secrets.APP_URL || vars.APP_URL }}
+        run: |
+          if [ -n "$APP_URL" ]; then
+            curl -sL -A "Mozilla/5.0 StatOmeKeepAlive" "$APP_URL" > /dev/null || true
+            echo "Pinged $APP_URL"
+          else
+            echo "Tip: define APP_URL in repository variables to ping a custom Streamlit URL"
+          fi

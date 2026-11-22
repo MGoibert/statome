@@ -386,10 +386,13 @@ def render_tab_stats():
     # SECTION 2 : RYTHME & PROJECTION DE FIN DE PAL
     # ==========================================
     with stat_tabs[1]:
-        st.markdown("#### ⚡ Statistiques de Rythme")
+        st.markdown("#### ⚡ Statistiques de Rythme (🎯 Focus vs 🛋️ Détente)")
 
         df_s = pd.DataFrame(all_sessions) if all_sessions else pd.DataFrame()
         if not df_s.empty:
+            if "is_focused" not in df_s.columns:
+                df_s["is_focused"] = True
+            df_s["is_focused"] = df_s["is_focused"].fillna(True).astype(bool)
             df_s["session_date"] = pd.to_datetime(df_s["start_time"]).dt.date
             now_d = date.today()
             seven_days_ago = now_d - timedelta(days=7)
@@ -398,27 +401,46 @@ def render_tab_stats():
             s_week = df_s[df_s["session_date"] >= seven_days_ago]
             s_month = df_s[df_s["session_date"] >= thirty_days_ago]
 
-            w_pages = s_week["pages_read"].sum() if not s_week.empty else 0
-            w_min = s_week["duration_minutes"].sum() if not s_week.empty else 0.0
-            w_speed = (w_pages / w_min) * 60.0 if w_min > 0 else 0.0
+            w_pages = int(s_week["pages_read"].sum()) if not s_week.empty else 0
+            w_min = float(s_week["duration_minutes"].sum()) if not s_week.empty else 0.0
 
-            m_pages = s_month["pages_read"].sum() if not s_month.empty else 0
-            m_min = s_month["duration_minutes"].sum() if not s_month.empty else 0.0
-            m_speed = (m_pages / m_min) * 60.0 if m_min > 0 else 0.0
+            m_pages = int(s_month["pages_read"].sum()) if not s_month.empty else 0
+            m_min = float(s_month["duration_minutes"].sum()) if not s_month.empty else 0.0
+
+            # Vitesses séparées : 🎯 Focus vs 🛋️ Détente
+            df_focus = df_s[df_s["is_focused"] == True]
+            df_chill = df_s[df_s["is_focused"] == False]
+
+            f_min_all = float(df_focus["duration_minutes"].sum()) if not df_focus.empty else 0.0
+            f_pages_all = int(df_focus["pages_read"].sum()) if not df_focus.empty else 0
+            focus_speed = (f_pages_all / f_min_all) * 60.0 if f_min_all > 0 else 0.0
+
+            c_min_all = float(df_chill["duration_minutes"].sum()) if not df_chill.empty else 0.0
+            c_pages_all = int(df_chill["pages_read"].sum()) if not df_chill.empty else 0
+            chill_speed = (c_pages_all / c_min_all) * 60.0 if c_min_all > 0 else 0.0
+
+            s_month_focus = s_month[s_month["is_focused"] == True] if not s_month.empty else pd.DataFrame()
+            mf_min = float(s_month_focus["duration_minutes"].sum()) if not s_month_focus.empty else 0.0
+            mf_pages = int(s_month_focus["pages_read"].sum()) if not s_month_focus.empty else 0
+            m_speed = (mf_pages / mf_min) * 60.0 if mf_min > 0 else focus_speed
+            w_speed = focus_speed
         else:
             w_pages, w_min, w_speed = 0, 0.0, 0.0
             m_pages, m_min, m_speed = 0, 0.0, 0.0
+            focus_speed, chill_speed = 0.0, 0.0
+            df_focus, df_chill = pd.DataFrame(), pd.DataFrame()
 
-        # KPI Cards avec 2 décimales maximum
+        # KPI Cards avec séparation 🎯 Vitesse Focus vs 🛋️ Vitesse Détente
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         with kpi1:
-            st.metric("Temps lu (7j)", f"{w_min:.2f} min", f"{w_min/60:.2f} h")
+            st.metric("🎯 Vitesse Focus", f"{focus_speed:.1f} p/h", f"{len(df_focus)} session(s) focus")
         with kpi2:
-            st.metric("Pages lues (7j)", f"{w_pages} p.", f"{w_pages/7:.2f} p/jour")
+            chill_val = f"{chill_speed:.1f} p/h" if chill_speed > 0 else "—"
+            st.metric("🛋️ Vitesse Détente", chill_val, f"{len(df_chill)} session(s) détente")
         with kpi3:
-            st.metric("Vitesse moy.", f"{w_speed:.2f} p/h", f"{m_speed:.2f} p/h (30j)")
+            st.metric("Pages lues (7j)", f"{w_pages} p.", f"{w_min/60:.1f} h cette semaine")
         with kpi4:
-            st.metric("Temps lu (30j)", f"{m_min/60:.2f} h", f"{m_pages} pages")
+            st.metric("Temps lu (30j)", f"{m_min/60:.1f} h", f"{m_pages} pages (30j)")
 
         st.markdown("---")
         # Graphique Bar Chart : Activité Journalière

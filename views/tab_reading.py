@@ -152,6 +152,11 @@ def dialog_dnf_book(book: dict):
 def dialog_manual_session(book: dict):
     st.markdown(f"### Ajouter une session sur **{book['title']}**")
     with st.form("manual_session_form"):
+        mode_choice = st.radio(
+            "Mode de lecture :",
+            options=["🎯 Lecture Focus (Concentrée)", "🛋️ Lecture Détente (Transports, TV, interruptions)"],
+            horizontal=True
+        )
         s_date = st.date_input("Date de la session", value=date.today())
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -171,11 +176,44 @@ def dialog_manual_session(book: dict):
                 "end_time": end_dt,
                 "duration_minutes": float(duration),
                 "start_page": int(start_p),
-                "end_page": int(end_p)
+                "end_page": int(end_p),
+                "is_focused": mode_choice.startswith("🎯")
             })
             st.session_state.active_reading_dialog = None
             st.success("Session manuelle ajoutée !")
             st.rerun()
+
+
+@st.dialog("✍️ Note rapide / Citation", on_dismiss=_on_close_reading_dialog)
+def dialog_quick_note(book: dict):
+    current_page = book.get("current_page") or 0
+    total_pages = max(book.get("page_count") or 1, 1)
+    with st.form("quick_note_dialog_form", clear_on_submit=True):
+        col_n1, col_n2, col_n3 = st.columns([1.2, 1, 1])
+        with col_n1:
+            n_type = st.selectbox("Type", ["Citation", "Commentaire", "Théorie", "Personnage"])
+        with col_n2:
+            n_page = st.number_input("Page", min_value=0, max_value=total_pages, value=current_page)
+        with col_n3:
+            n_chap = st.number_input("Chapitre", min_value=0, max_value=999, value=0)
+
+        n_content = st.text_area("Contenu de la note / citation *", placeholder="Tapez votre citation ou réflexion ici...")
+        submit_note = st.form_submit_button("💾 Enregistrer la note", width="stretch", type="primary")
+
+        if submit_note:
+            if n_content.strip():
+                add_book_note({
+                    "book_id": book["id"],
+                    "page_number": int(n_page) if n_page > 0 else None,
+                    "chapter_number": int(n_chap) if n_chap > 0 else None,
+                    "note_type": n_type,
+                    "content": n_content.strip()
+                })
+                st.session_state.active_reading_dialog = None
+                st.toast("Note enregistrée avec succès ! ✍️")
+                st.rerun()
+            else:
+                st.warning("Le contenu de la note ne peut pas être vide.")
 
 
 def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp: Optional[float]):
@@ -262,8 +300,6 @@ def render_live_timer(is_running: bool, accumulated_sec: float, start_timestamp:
 
 
 def render_tab_reading():
-    st.markdown("### 📖 Lecture en cours & Chronomètre")
-
     # Synchronisation systématique avec la base (cache mémoire 0ms + survie garantie à la mise en veille)
     persisted = get_active_timer()
     if persisted:
@@ -271,11 +307,14 @@ def render_tab_reading():
         st.session_state.timer_start_time = persisted["start_time"]
         st.session_state.timer_accumulated = persisted["accumulated_seconds"]
         st.session_state.timer_book_id = persisted["book_id"]
+        st.session_state.timer_is_focused = persisted.get("is_focused", True)
     else:
         st.session_state.timer_running = False
         st.session_state.timer_start_time = None
         st.session_state.timer_accumulated = 0.0
         st.session_state.timer_book_id = None
+        if "timer_is_focused" not in st.session_state:
+            st.session_state.timer_is_focused = True
 
     if "active_reading_dialog" not in st.session_state:
         st.session_state.active_reading_dialog = None
@@ -303,19 +342,22 @@ def render_tab_reading():
             st.markdown("Rendez-vous dans l'onglet **➕ Ajouter** pour enregistrer votre premier ouvrage !")
         return
 
-    # Sélecteur du livre actif parmi ceux en cours
+    # Sélecteur du livre actif parmi ceux en cours (masqué si un seul livre en cours pour un écran plus Zen)
     book_options = {b["id"]: b for b in current_books}
     
     default_index = 0
     if st.session_state.timer_book_id in book_options:
         default_index = list(book_options.keys()).index(st.session_state.timer_book_id)
 
-    selected_book_id = st.selectbox(
-        "Livre actif :",
-        options=list(book_options.keys()),
-        index=default_index,
-        format_func=lambda bid: f"{book_options[bid]['title']} — {book_options[bid]['author']}"
-    )
+    if len(current_books) > 1:
+        selected_book_id = st.selectbox(
+            "📖 Livre en cours :",
+            options=list(book_options.keys()),
+            index=default_index,
+            format_func=lambda bid: f"{book_options[bid]['title']} — {book_options[bid]['author']}"
+        )
+    else:
+        selected_book_id = current_books[0]["id"]
 
     book = get_book(selected_book_id)
     if not book:
@@ -328,69 +370,66 @@ def render_tab_reading():
         dialog_dnf_book(book)
     elif st.session_state.active_reading_dialog == "manual":
         dialog_manual_session(book)
+    elif st.session_state.active_reading_dialog == "note":
+        dialog_quick_note(book)
 
     # ==========================================
-    # Carte Visuelle de Progression Mobile (Sans HTML brut)
+    # Carte Visuelle de Progression Mobile (Basée sur la vitesse 🎯 Focus)
     # ==========================================
     current_page = book["current_page"] or 0
     total_pages = max(book["page_count"] or 1, 1)
     progress_ratio = min(max(current_page / total_pages, 0.0), 1.0)
-    percent_done = round(progress_ratio * 100, 2)
+    percent_done = round(progress_ratio * 100, 1)
     pages_left = max(total_pages - current_page, 0)
 
-    # Calcul de la vitesse moyenne de lecture
+    # Calcul de la vitesse de référence 🎯 Focus (pour ne pas fausser les estimations avec les sessions Détente)
     book_sessions = get_reading_sessions(book_id=book["id"])
-    total_min = sum(s["duration_minutes"] for s in book_sessions)
-    total_p = sum(s["pages_read"] for s in book_sessions)
+    focused_book_s = [s for s in book_sessions if s.get("is_focused", True)]
+    f_min = sum(s["duration_minutes"] for s in focused_book_s)
+    f_p = sum(s["pages_read"] for s in focused_book_s)
     
-    if total_min > 0 and total_p > 0:
-        speed_c = (total_p / total_min) * 60.0
+    if f_min > 0 and f_p > 0:
+        speed_c = (f_p / f_min) * 60.0
     else:
         all_s = get_reading_sessions()
-        all_min = sum(s["duration_minutes"] for s in all_s)
-        all_p = sum(s["pages_read"] for s in all_s)
-        speed_c = (all_p / all_min) * 60.0 if all_min > 0 and all_p > 0 else 45.0
+        focused_all_s = [s for s in all_s if s.get("is_focused", True)]
+        all_f_min = sum(s["duration_minutes"] for s in focused_all_s)
+        all_f_p = sum(s["pages_read"] for s in focused_all_s)
+        speed_c = (all_f_p / all_f_min) * 60.0 if all_f_min > 0 and all_f_p > 0 else 45.0
 
-    speed_c = round(speed_c, 2)
+    speed_c = round(speed_c, 1)
     hours_left = pages_left / speed_c if speed_c > 0 else 0
     h_int = int(hours_left)
     m_int = int((hours_left - h_int) * 60)
-    time_estimate_str = f"~{h_int}h {m_int}min" if h_int > 0 else f"~{m_int} min"
+    time_estimate_str = f"~{h_int}h {m_int:02d}min" if h_int > 0 else f"~{m_int} min"
 
     cover_html = (
-        f'<img src="{book["cover_url"]}" style="width: 85px; height: 125px; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">'
+        f'<img src="{book["cover_url"]}" style="width: 82px; height: 122px; object-fit: cover; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">'
         if book.get("cover_url")
-        else '<div style="width: 85px; height: 125px; background: #334155; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px;">📖</div>'
+        else '<div style="width: 82px; height: 122px; background: #334155; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 26px;">📖</div>'
     )
 
     series_line = (
-        f'<div style="font-size: 0.8rem; color: #818CF8; margin-top: 2px;">{book["series_name"]} (Tome {book.get("series_volume", 1)})</div>'
+        f'<div style="font-size: 0.8rem; color: #818CF8; margin-top: 2px;">{book["series_name"]} • Tome {book.get("series_volume", 1):g}</div>'
         if book.get("series_name")
-        else ''
-    )
-    subg_list_r = book.get("fantasy_subgenres") or ([book["fantasy_subgenre"]] if book.get("fantasy_subgenre") else [])
-    subg_line = (
-        f'<div style="font-size: 0.78rem; color: #E879F9; margin-top: 2px;">✨ {" • ".join(subg_list_r)}</div>'
-        if subg_list_r
         else ''
     )
 
     card_html = (
-        f'<div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px; margin-bottom: 12px;">'
-        f'<div style="display: flex; gap: 16px; align-items: flex-start;">'
+        f'<div style="background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; padding: 16px; margin-bottom: 10px;">'
+        f'<div style="display: flex; gap: 16px; align-items: center;">'
         f'{cover_html}'
         f'<div style="flex: 1;">'
         f'<div style="font-size: 1.15rem; font-weight: 700; line-height: 1.25; color: #F8FAFC;">{book["title"]}</div>'
         f'<div style="font-size: 0.9rem; color: #94A3B8; margin-top: 2px;">{book["author"]}</div>'
         f'{series_line}'
-        f'{subg_line}'
-        f'<div style="display: flex; gap: 12px; margin-top: 10px; font-size: 0.85rem; color: #E2E8F0;">'
+        f'<div style="display: flex; gap: 10px; margin-top: 10px; font-size: 0.9rem; color: #E2E8F0; align-items: baseline;">'
         f'<div><b>{current_page}</b> / {total_pages} p.</div>'
-        f'<div>•</div>'
-        f'<div style="color: #6366F1; font-weight: 600;">{percent_done:.2f}%</div>'
+        f'<div style="color: #64748B;">•</div>'
+        f'<div style="color: #818CF8; font-weight: 700;">{percent_done:.1f}%</div>'
         f'</div>'
         f'<div style="font-size: 0.8rem; color: #A5B4FC; margin-top: 4px;">'
-        f'⏳ {pages_left} pages restantes ({time_estimate_str} à {speed_c:.2f} p/h)'
+        f'⏳ {pages_left} p. restantes ({time_estimate_str} à {speed_c:.0f} p/h 🎯)'
         f'</div>'
         f'</div>'
         f'</div>'
@@ -402,24 +441,59 @@ def render_tab_reading():
         st.progress(progress_ratio)
 
     # ==========================================
+    # Sélecteur de Mode : 🎯 Focus vs 🛋️ Détente
+    # ==========================================
+    is_foc = bool(st.session_state.get("timer_is_focused", True))
+    c_m1, c_m2 = st.columns(2)
+    with c_m1:
+        if st.button(
+            "🎯 Lecture Focus",
+            key="btn_mode_focus",
+            width="stretch",
+            type="primary" if is_foc else "secondary",
+            help="Lecture concentrée : utilisée pour calculer votre vitesse de référence (pages/h)"
+        ):
+            st.session_state.timer_is_focused = True
+            if st.session_state.timer_running or st.session_state.timer_accumulated > 0:
+                save_active_timer(book["id"], st.session_state.timer_running, st.session_state.timer_start_time, st.session_state.timer_accumulated, True)
+            st.rerun()
+    with c_m2:
+        if st.button(
+            "🛋️ Lecture Détente",
+            key="btn_mode_chill",
+            width="stretch",
+            type="primary" if not is_foc else "secondary",
+            help="Transports, TV, interruptions : compte vos pages et votre temps sans fausser votre vitesse Focus"
+        ):
+            st.session_state.timer_is_focused = False
+            if st.session_state.timer_running or st.session_state.timer_accumulated > 0:
+                save_active_timer(book["id"], st.session_state.timer_running, st.session_state.timer_start_time, st.session_state.timer_accumulated, False)
+            st.rerun()
+
+    mode_caption = (
+        "🎯 **Mode Focus actif** — Vos pages et votre vitesse comptent dans votre moyenne de référence."
+        if is_foc
+        else "🛋️ **Mode Détente actif** (transports, TV, interruptions) — Vos pages comptent, mais votre vitesse Focus est protégée."
+    )
+    st.caption(mode_caption)
+
+    # ==========================================
     # Le Chronomètre de Session (Dynamique JS)
     # ==========================================
-    st.markdown("#### ⏱️ Chronomètre de lecture")
-
     render_live_timer(
         is_running=st.session_state.timer_running,
         accumulated_sec=st.session_state.timer_accumulated,
         start_timestamp=st.session_state.timer_start_time
     )
 
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
+    col_btn1, col_btn2 = st.columns(2)
     
     with col_btn1:
         if not st.session_state.timer_running:
             start_label = "▶️ Reprendre" if st.session_state.timer_accumulated > 0 else "▶️ Démarrer"
             if st.button(start_label, key="btn_timer_start", width="stretch", type="primary"):
                 now_ts = time.time()
-                save_active_timer(book["id"], True, now_ts, st.session_state.timer_accumulated)
+                save_active_timer(book["id"], True, now_ts, st.session_state.timer_accumulated, is_foc)
                 st.session_state.timer_running = True
                 st.session_state.timer_start_time = now_ts
                 st.session_state.timer_book_id = book["id"]
@@ -428,7 +502,7 @@ def render_tab_reading():
             if st.button("⏸️ Pause", key="btn_timer_pause", width="stretch"):
                 elapsed = max(1.0, time.time() - st.session_state.timer_start_time) if st.session_state.timer_start_time else 0.0
                 new_accum = st.session_state.timer_accumulated + elapsed
-                save_active_timer(book["id"], False, None, new_accum)
+                save_active_timer(book["id"], False, None, new_accum, is_foc)
                 st.session_state.timer_running = False
                 st.session_state.timer_accumulated = new_accum
                 st.session_state.timer_start_time = None
@@ -440,25 +514,21 @@ def render_tab_reading():
             new_accum = st.session_state.timer_accumulated
             if st.session_state.timer_running and st.session_state.timer_start_time:
                 new_accum += max(1.0, time.time() - st.session_state.timer_start_time)
-            save_active_timer(book["id"], False, None, new_accum)
+            save_active_timer(book["id"], False, None, new_accum, is_foc)
             st.session_state.timer_running = False
             st.session_state.timer_accumulated = new_accum
             st.session_state.timer_start_time = None
             st.rerun()
 
-    with col_btn3:
-        if st.button("➕ Manuel", key="btn_timer_manual", width="stretch", help="Ajouter une session lue hors chrono"):
-            st.session_state.active_reading_dialog = "manual"
-            st.rerun()
-
     # Mini formulaire de validation post-chrono (affiché dès que le chrono est en pause/arrêté avec du temps accumulé)
     if not st.session_state.timer_running and st.session_state.timer_accumulated > 0:
         st.markdown("---")
-        st.markdown("##### 📝 Validation de la session de lecture")
+        st.markdown("##### 📝 Enregistrer votre session")
         dur = max(round(st.session_state.timer_accumulated / 60.0, 2), 0.1)
         mins_int = int(st.session_state.timer_accumulated // 60)
         secs_int = int(st.session_state.timer_accumulated % 60)
-        st.info(f"Durée mesurée : **{mins_int:02d}m {secs_int:02d}s** ({dur:.2f} min) | Page de départ : **{current_page}** — *Vous pouvez reprendre le chrono avec ▶️ Reprendre ou enregistrer la session ci-dessous.*")
+        mode_badge = "🎯 Focus" if is_foc else "🛋️ Détente"
+        st.info(f"⏱️ **{mins_int:02d}m {secs_int:02d}s** ({mode_badge}) | Départ : **p. {current_page}**")
 
         with st.form("validate_session_form"):
             new_p = st.number_input(
@@ -467,11 +537,17 @@ def render_tab_reading():
                 max_value=total_pages,
                 value=min(current_page + 20, total_pages)
             )
+            val_mode = st.radio(
+                "Mode de cette session :",
+                options=["🎯 Lecture Focus (Concentrée)", "🛋️ Lecture Détente (Transports, TV, interruptions)"],
+                index=0 if is_foc else 1,
+                horizontal=True
+            )
             col_val, col_cancel = st.columns(2)
             with col_val:
-                confirm_btn = st.form_submit_button("✅ Enregistrer la session", type="primary", width="stretch")
+                confirm_btn = st.form_submit_button("✅ Enregistrer", type="primary", width="stretch")
             with col_cancel:
-                cancel_btn = st.form_submit_button("🗑️ Réinitialiser à 0", width="stretch")
+                cancel_btn = st.form_submit_button("🗑️ Effacer (00:00)", width="stretch")
 
             if confirm_btn:
                 now_dt = datetime.now()
@@ -481,7 +557,8 @@ def render_tab_reading():
                     "end_time": now_dt,
                     "duration_minutes": max(dur, 1.0),
                     "start_page": current_page,
-                    "end_page": int(new_p)
+                    "end_page": int(new_p),
+                    "is_focused": val_mode.startswith("🎯")
                 })
                 clear_active_timer()
                 st.session_state.timer_running = False
@@ -498,63 +575,39 @@ def render_tab_reading():
                 st.rerun()
 
     # ==========================================
-    # Prise de Note Rapide (In-Session)
+    # Barre d'Actions Zen (Tiroirs / Pop-ups au clic)
     # ==========================================
-    st.markdown("---")
-    with st.expander("✍️ Prise de note rapide / Citation", expanded=False):
-        with st.form("quick_note_form", clear_on_submit=True):
-            col_n1, col_n2, col_n3 = st.columns([1, 1, 1])
-            with col_n1:
-                n_type = st.selectbox("Type", ["Citation", "Commentaire", "Théorie", "Personnage"])
-            with col_n2:
-                n_page = st.number_input("Page", min_value=0, max_value=total_pages, value=current_page)
-            with col_n3:
-                n_chap = st.number_input("Chapitre", min_value=0, max_value=999, value=0)
-
-            n_content = st.text_area("Contenu de la note / citation *", placeholder="Tapez votre citation ou réflexion ici...")
-            submit_note = st.form_submit_button("Enregistrer la note", width="stretch", type="secondary")
-
-            if submit_note:
-                if n_content.strip():
-                    add_book_note({
-                        "book_id": book["id"],
-                        "page_number": int(n_page) if n_page > 0 else None,
-                        "chapter_number": int(n_chap) if n_chap > 0 else None,
-                        "note_type": n_type,
-                        "content": n_content.strip()
-                    })
-                    st.success("Note enregistrée avec succès !")
-                else:
-                    st.warning("Le contenu de la note ne peut pas être vide.")
-
-    # ==========================================
-    # Clôture du Livre (Terminé / Abandon)
-    # ==========================================
-    st.markdown("---")
-    st.markdown("##### 🏁 Clôture de l'ouvrage")
-    col_end1, col_end2 = st.columns(2)
-    with col_end1:
-        if st.button("✅ Livre Terminé", width="stretch", type="primary"):
+    st.markdown("<div style='height: 10px'></div>", unsafe_allow_html=True)
+    act1, act2, act3, act4 = st.columns(4)
+    with act1:
+        if st.button("✍️ Note", key="btn_zen_note", width="stretch", help="Prendre une note ou citation"):
+            st.session_state.active_reading_dialog = "note"
+            st.rerun()
+    with act2:
+        if st.button("➕ Manuel", key="btn_zen_manual", width="stretch", help="Ajouter une session hors chrono"):
+            st.session_state.active_reading_dialog = "manual"
+            st.rerun()
+    with act3:
+        if st.button("🏁 Terminé", key="btn_zen_finish", width="stretch", help="Clôturer et noter le livre"):
             st.session_state.active_reading_dialog = "finish"
             st.rerun()
-    with col_end2:
-        if st.button("🛑 Abandonner (DNF)", width="stretch"):
+    with act4:
+        if st.button("🛑 DNF", key="btn_zen_dnf", width="stretch", help="Abandonner ce livre"):
             st.session_state.active_reading_dialog = "dnf"
             st.rerun()
 
-    # Mini aperçu des dernières notes du livre
+    # Tiroir discret (fermé par défaut) pour les notes et sessions récentes du livre
     recent_notes = get_book_notes(book["id"])
-    if recent_notes:
-        with st.expander(f"📜 Citations et notes prises sur ce livre ({len(recent_notes)})"):
-            for note in recent_notes[:5]:
-                p_info = f"p. {note['page_number']}" if note.get('page_number') else ""
-                ch_info = f"Ch. {note['chapter_number']}" if note.get('chapter_number') else ""
-                loc = " • ".join([x for x in [p_info, ch_info] if x])
-                
-                note_html = (
-                    f'<div style="background: rgba(15, 23, 42, 0.6); padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #6366F1;">'
-                    f'<div style="font-size: 0.75rem; color: #818CF8; font-weight: 600;">{note["note_type"].upper()} {f"— {loc}" if loc else ""}</div>'
-                    f'<div style="font-size: 0.9rem; color: #F1F5F9; margin-top: 4px; font-style: {"italic" if note["note_type"] == "Citation" else "normal"};">{note["content"]}</div>'
-                    f'</div>'
-                )
-                st.markdown(note_html, unsafe_allow_html=True)
+    if recent_notes or book_sessions:
+        with st.expander(f"📜 Historique & Notes de ce livre ({len(book_sessions)} sessions • {len(recent_notes)} notes)", expanded=False):
+            if book_sessions:
+                st.caption("Dernières sessions :")
+                for s in book_sessions[:5]:
+                    m_icon = "🎯" if s.get("is_focused", True) else "🛋️"
+                    dt_str = s["start_time"].strftime("%d/%m") if hasattr(s["start_time"], "strftime") else ""
+                    st.markdown(f"- {m_icon} **{dt_str}** : +{s['pages_read']} p. en {s['duration_minutes']:.0f} min (*{s['pages_per_hour']:.0f} p/h*)")
+            if recent_notes:
+                st.caption("Dernières notes & citations :")
+                for note in recent_notes[:5]:
+                    p_info = f"p. {note['page_number']}" if note.get('page_number') else ""
+                    st.markdown(f"- **{note['note_type']}** ({p_info}) : *{note['content']}*")

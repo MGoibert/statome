@@ -496,9 +496,10 @@ def dialog_book_detail(book_id: int):
                     s_date_str = s["start_time"].strftime("%d/%m/%Y") if isinstance(s["start_time"], (datetime, date)) else str(s["start_time"])
                     dur_val = round(float(s['duration_minutes']), 2)
                     speed_val = round(float(s['pages_per_hour']), 2)
+                    mode_tag = "🎯 Focus" if s.get("is_focused", True) else "🛋️ Détente"
                     session_html = (
                         f'<div style="font-size: 0.85rem; color: #CBD5E1; padding: 4px 0;">'
-                        f'🗓️ <b>{s_date_str}</b> : {dur_val:.2f} min | +{s["pages_read"]} pages (p. {s["start_page"]} → {s["end_page"]}) | ⚡ {speed_val:.2f} p/h'
+                        f'🗓️ <b>{s_date_str}</b> ({mode_tag}) : {dur_val:.1f} min | +{s["pages_read"]} p. (p. {s["start_page"]} → {s["end_page"]}) | ⚡ {speed_val:.1f} p/h'
                         f'</div>'
                     )
                     st.markdown(session_html, unsafe_allow_html=True)
@@ -518,48 +519,60 @@ def dialog_book_detail(book_id: int):
 
 @st.fragment
 def render_tab_library():
-    st.markdown("### 📚 Votre Bibliothèque & PAL")
+    curr_date = date.today()
+    curr_m_french = format_month_year_french(curr_date)
+    curr_m_code = curr_date.strftime("%Y-%m")
+    curr_y = curr_date.year
 
-    search_query = st.text_input("🔍 Rechercher un titre, auteur, saga, genre ou sous-genre...", placeholder="Ex: Kvothe, Sanderson, Grimdark, Romantasy...", label_visibility="collapsed")
+    search_query = st.text_input(
+        "🔍 Rechercher...",
+        placeholder="🔍 Rechercher un titre, auteur, saga...",
+        label_visibility="collapsed"
+    )
 
-    f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-    
-    with f_col1:
-        status_filter = st.selectbox(
-            "Statut",
-            ["Tous", "En cours", "Bibliothèque", "Wishlist", "À acheter", "Terminé", "DNF"]
-        )
+    quick_pill = st.radio(
+        "Filtre rapide",
+        options=["Tous", "📖 En cours", "📚 À lire", "🎯 PAL du mois", "✅ Terminé", "🌟 Wishlist"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="lib_quick_pill"
+    )
 
-    with f_col2:
-        curr_date = date.today()
-        curr_m_french = format_month_year_french(curr_date)
-        curr_m_code = curr_date.strftime("%Y-%m")
-        curr_y = curr_date.year
-        pal_filter = st.selectbox(
-            "Périmètre PAL",
-            ["Toutes", f"PAL du mois ({curr_m_french})", f"PAL de l'année ({curr_y})", "Hors PAL"]
-        )
-
-    with f_col3:
-        subg_options = ["Tous"] + [s for s in FANTASY_SUBGENRES if s != "Aucun"]
-        subgenre_filter = st.selectbox(
-            "Sous-genre Fantasy",
-            subg_options,
-            help="Filtrer par sous-genre spécifique de Fantasy"
-        )
-
-    with f_col4:
-        view_mode = st.selectbox(
-            "Vue spéciale",
-            ["Grille catalogue", "🛒 Suites de séries à acheter"]
-        )
+    with st.expander("🔍 Filtres avancés (Sous-genre Fantasy, PAL, Suites à acheter)", expanded=False):
+        f_col1, f_col2, f_col3 = st.columns(3)
+        with f_col1:
+            subg_options = ["Tous"] + [s for s in FANTASY_SUBGENRES if s != "Aucun"]
+            subgenre_filter = st.selectbox("Sous-genre Fantasy", subg_options)
+        with f_col2:
+            pal_filter = st.selectbox(
+                "Périmètre PAL",
+                ["Toutes", f"PAL du mois ({curr_m_french})", f"PAL de l'année ({curr_y})", "Hors PAL"]
+            )
+        with f_col3:
+            view_mode = st.selectbox(
+                "Vue spéciale",
+                ["Grille catalogue", "🛒 Suites de séries à acheter", "🛒 À acheter", "🛑 Abandonnés (DNF)"]
+            )
 
     if view_mode == "🛒 Suites de séries à acheter":
-        st.info("💡 Cette vue identifie les tomes suivants de vos sagas dont le tome précédent est terminé !", icon="✨")
+        st.info("💡 Tomes suivants de vos sagas dont le tome précédent est terminé.", icon="✨")
         books_to_display = get_series_to_buy()
     else:
-        filter_status = None if status_filter == "Tous" else status_filter
-        filter_month = curr_m_code if pal_filter.startswith("PAL du mois") else None
+        pill_to_status = {
+            "Tous": None,
+            "📖 En cours": "En cours",
+            "📚 À lire": "Bibliothèque",
+            "🎯 PAL du mois": None,
+            "✅ Terminé": "Terminé",
+            "🌟 Wishlist": "Wishlist"
+        }
+        filter_status = pill_to_status.get(quick_pill)
+        if view_mode == "🛒 À acheter":
+            filter_status = "À acheter"
+        elif view_mode == "🛑 Abandonnés (DNF)":
+            filter_status = "DNF"
+
+        filter_month = curr_m_code if (quick_pill == "🎯 PAL du mois" or pal_filter.startswith("PAL du mois")) else None
         filter_year = curr_y if pal_filter.startswith("PAL de l'année") else None
         filter_subg = None if subgenre_filter == "Tous" else subgenre_filter
 
@@ -574,14 +587,14 @@ def render_tab_library():
         if pal_filter == "Hors PAL":
             books_to_display = [b for b in books_to_display if not b.get("pal_month") and not b.get("pal_year")]
 
-    st.markdown(f"**{len(books_to_display)}** livre(s) trouvé(s)")
+    st.caption(f"**{len(books_to_display)}** livre(s) affiché(s)")
 
     if not books_to_display:
         empty_html = (
-            '<div style="text-align: center; padding: 40px 20px; color: #94A3B8;">'
-            '<div style="font-size: 3rem;">📚</div>'
-            '<div style="font-size: 1.1rem; font-weight: 600;">Aucun livre ne correspond à vos filtres</div>'
-            '<div style="font-size: 0.85rem; margin-top: 4px;">Modifiez les filtres ci-dessus ou ajoutez un nouveau livre.</div>'
+            '<div style="text-align: center; padding: 36px 20px; color: #94A3B8;">'
+            '<div style="font-size: 2.6rem;">📚</div>'
+            '<div style="font-size: 1.05rem; font-weight: 600;">Aucun livre trouvé</div>'
+            '<div style="font-size: 0.85rem; margin-top: 4px;">Changez de pastille ci-dessus ou ajoutez un livre.</div>'
             '</div>'
         )
         st.markdown(empty_html, unsafe_allow_html=True)
@@ -595,49 +608,55 @@ def render_tab_library():
                 st_color = STATUS_COLORS.get(b["status"], "#64748B")
                 curr_p = b.get("current_page", 0) or 0
                 tot_p = max(b.get("page_count", 1) or 1, 1)
-                pct = round(min(curr_p / tot_p, 1.0) * 100, 2)
+                pct = round(min(curr_p / tot_p, 1.0) * 100, 1)
 
                 cover_html = (
-                    f'<img src="{b["cover_url"]}" style="width: 70px; height: 105px; object-fit: cover; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">'
+                    f'<img src="{b["cover_url"]}" style="width: 64px; height: 96px; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">'
                     if b.get("cover_url")
-                    else '<div style="width: 70px; height: 105px; background: #334155; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 20px;">📖</div>'
+                    else '<div style="width: 64px; height: 96px; background: #334155; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px;">📖</div>'
                 )
 
                 rating_str = ""
                 if b.get("rating_global") is not None and float(b["rating_global"]) > 0:
-                    rating_str = f"⭐ {float(b['rating_global']):.2f}/5"
-                elif b.get("popularity_score") is not None:
-                    rating_str = f"👥 {float(b['popularity_score']):.2f}/5"
+                    rating_str = f"⭐ {float(b['rating_global']):.2f}".rstrip('0').rstrip('.') + "/5"
 
-                series_str = f"{b['series_name']} (T.{b['series_volume']})" if b.get("series_name") else ""
-                pal_badge = format_month_year_french(yyyy_mm=b["pal_month"]) if b.get("pal_month") else ""
+                series_str = f"{b['series_name']} • T.{b['series_volume']:g}" if (b.get("series_name") and b.get("series_volume")) else (b.get("series_name") or "")
+                series_div = f'<div style="font-size: 0.76rem; color: #818CF8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{series_str}</div>' if series_str else ""
 
-                series_div = f'<div style="font-size: 0.75rem; color: #818CF8; margin-top: 2px;">{series_str}</div>' if series_str else ""
-                subg_list_card = b.get("fantasy_subgenres") or ([b["fantasy_subgenre"]] if b.get("fantasy_subgenre") else [])
-                subg_str = " • ".join(subg_list_card) if subg_list_card else ""
-                subg_div = f'<div style="font-size: 0.72rem; color: #E879F9; margin-top: 2px;">✨ {subg_str}</div>' if subg_str else ""
-                pal_div = f'<div style="font-size: 0.72rem; color: #38BDF8; margin-top: 2px;">🎯 {pal_badge}</div>' if pal_badge else ""
-                prog_div = f'<div style="margin-top: 6px; font-size: 0.72rem; color: #94A3B8;">{curr_p}/{tot_p} p. ({pct:.1f}%)</div>' if b["status"] in ("En cours", "Terminé", "DNF") else ""
+                if b["status"] == "En cours":
+                    bottom_meta = (
+                        f'<div style="margin-top: 8px;">'
+                        f'<div style="display: flex; justify-content: space-between; font-size: 0.73rem; color: #CBD5E1; margin-bottom: 3px;">'
+                        f'<span>{curr_p} / {tot_p} p.</span><span style="color: #818CF8; font-weight: 700;">{pct:.0f}%</span>'
+                        f'</div>'
+                        f'<div style="height: 5px; background: #334155; border-radius: 99px; overflow: hidden;">'
+                        f'<div style="width: {pct}%; height: 100%; background: linear-gradient(90deg, #6366F1, #38BDF8);"></div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+                elif b.get("pal_month"):
+                    pal_badge = format_month_year_french(yyyy_mm=b["pal_month"])
+                    bottom_meta = f'<div style="font-size: 0.73rem; color: #38BDF8; margin-top: 6px;">🎯 PAL {pal_badge}</div>'
+                else:
+                    bottom_meta = f'<div style="font-size: 0.73rem; color: #64748B; margin-top: 6px;">{tot_p} pages</div>'
 
                 card_html = (
-                    f'<div style="background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center;">'
+                    f'<div style="background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; margin-bottom: 8px; display: flex; gap: 12px; align-items: center;">'
                     f'{cover_html}'
                     f'<div style="flex: 1; min-width: 0;">'
                     f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">'
-                    f'<span style="background: {st_color}22; color: {st_color}; border: 1px solid {st_color}55; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;">{b["status"]}</span>'
-                    f'<span style="font-size: 0.75rem; color: #FBBF24; font-weight: 600;">{rating_str}</span>'
+                    f'<span style="background: {st_color}22; color: {st_color}; border: 1px solid {st_color}55; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 700;">{b["status"]}</span>'
+                    f'<span style="font-size: 0.76rem; color: #FBBF24; font-weight: 700;">{rating_str}</span>'
                     f'</div>'
                     f'<div style="font-weight: 700; font-size: 0.95rem; color: #F8FAFC; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{b["title"]}</div>'
                     f'<div style="font-size: 0.8rem; color: #94A3B8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{b["author"]}</div>'
                     f'{series_div}'
-                    f'{subg_div}'
-                    f'{pal_div}'
-                    f'{prog_div}'
+                    f'{bottom_meta}'
                     f'</div>'
                     f'</div>'
                 )
 
                 st.markdown(card_html, unsafe_allow_html=True)
 
-                if st.button("Détails / Éditer", key=f"btn_book_{b['id']}", width="stretch"):
+                if st.button("Ouvrir la fiche", key=f"btn_book_{b['id']}", width="stretch"):
                     dialog_book_detail(b["id"])
