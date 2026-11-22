@@ -94,11 +94,11 @@ function normalizeSession(row, booksById) {
     book_cover: b.cover_url || row.book_cover || "",
     start_time: row.start_time,
     end_time: row.end_time,
-    duration_minutes: Math.round(Number(row.duration_minutes || 0) * 10) / 10,
+    duration_minutes: Math.round(Number(row.duration_minutes || 0) * 100) / 100,
     start_page: Number(row.start_page || 0),
     end_page: Number(row.end_page || 0),
     pages_read: Number(row.pages_read || 0),
-    pages_per_hour: Math.round(Number(row.pages_per_hour || 0) * 10) / 10,
+    pages_per_hour: Math.round(Number(row.pages_per_hour || 0) * 100) / 100,
     is_weekend: row.is_weekend === true || row.is_weekend === "t" || row.is_weekend === "true",
     is_focused: row.is_focused === undefined || row.is_focused === null ? true : (row.is_focused === true || row.is_focused === "t" || row.is_focused === "true")
   };
@@ -118,29 +118,192 @@ function normalizeNote(row, booksById) {
   };
 }
 
-async function searchGoogleBooks(q) {
-  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8&langRestrict=fr`;
-  const resp = await fetch(url);
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  return (data.items || []).map((item) => {
-    const info = item.volumeInfo || {};
-    const ids = info.industryIdentifiers || [];
-    const isbnObj = ids.find((i) => i.type === "ISBN_13") || ids.find((i) => i.type === "ISBN_10") || {};
-    let cover = (info.imageLinks && (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail)) || "";
-    if (cover.startsWith("http://")) cover = cover.replace("http://", "https://");
+function inferSeriesFromTitle(rawTitle) {
+  if (!rawTitle) return { cleanTitle: "", seriesName: "", seriesVolume: null };
+  let title = String(rawTitle).trim();
+  const patterns = [
+    /^(.*?)\s*[-–:,]\s*(?:Tome|T\.|Vol\.|Volume|Livre|Book)\s*(\d+(?:[.,]\d+)?)\s*[-–:,]?\s*(.*)$/i,
+    /^(.*?)\s*\((?:Tome|T\.|Vol\.|Volume|Livre|Book|#)\s*(\d+(?:[.,]\d+)?)\)$/i,
+    /^(.*?)\s*,\s*(?:Tome|T\.|Volume)\s*(\d+(?:[.,]\d+)?)$/i
+  ];
+  for (const pat of patterns) {
+    const m = title.match(pat);
+    if (m) {
+      const sName = m[1].trim();
+      const vol = parseFloat(String(m[2]).replace(",", "."));
+      const sub = m[3] ? m[3].trim() : "";
+      return {
+        cleanTitle: sub ? `${sName} T.${vol} : ${sub}` : title,
+        seriesName: sName,
+        seriesVolume: isNaN(vol) ? null : vol
+      };
+    }
+  }
+  return { cleanTitle: title, seriesName: "", seriesVolume: null };
+}
+
+function inferSubgenresAndTags(textBlob) {
+  const low = String(textBlob || "").toLowerCase();
+  const subg = [];
+  const tags = [];
+  if (low.includes("romantasy") || (low.includes("romance") && (low.includes("fae") || low.includes("fantasy") || low.includes("dragon")))) subg.push("Romantasy");
+  if (low.includes("cozy") || low.includes("cosy") || low.includes("witch") || low.includes("sorcière")) subg.push("Cozy Fantasy");
+  if (low.includes("grimdark")) subg.push("Grimdark");
+  if (low.includes("dark fantasy") || low.includes("gothic") || low.includes("gothique") || low.includes("vampire")) subg.push("Dark Fantasy");
+  if (low.includes("urban fantasy") || low.includes("urbaine")) subg.push("Urban Fantasy");
+  if (low.includes("epic") || low.includes("épique")) subg.push("Epic Fantasy");
+  if (low.includes("high fantasy")) subg.push("High Fantasy");
+  if (low.includes("steampunk")) subg.push("Steampunk / Arcanepunk");
+  if (low.includes("myth")) subg.push("Mythic Fantasy");
+
+  if (low.includes("witch") || low.includes("sorcière")) tags.push("Sorcières");
+  if (low.includes("dragon")) tags.push("Dragons");
+  if (low.includes("magic") || low.includes("magie")) tags.push("Magie");
+  if (low.includes("fae") || low.includes("faë")) tags.push("Faë");
+  if (low.includes("vampire")) tags.push("Vampires");
+  if (low.includes("academ")) tags.push("Dark Academia");
+  return { subg, tags };
+}
+
+async function fetchBnfByIsbn(isbn) {
+  try {
+    const clean = isbn.replace(/[^0-9X]/gi, "");
+    if (clean.length < 10) return null;
+    const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&query=${encodeURIComponent(`bib.isbn adj "${clean}"`)}&recordSchema=unimarcxchange&maximumRecords=1`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const xml = await resp.text();
+    const extractSub = (tag, code) => {
+      const reg = new RegExp(`<mxc:datafield[^>]*tag="${tag}"[^>]*>[\\s\\S]*?<mxc:subfield[^>]*code="${code}"[^>]*>([\\s\\S]*?)<\\/mxc:subfield>`, "i");
+      const m = xml.match(reg);
+      return m ? m[1].replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim() : "";
+    };
+    const titleMain = extractSub("200", "a");
+    if (!titleMain) return null;
+    const titleSub = extractSub("200", "e");
+    const authorFirst = extractSub("700", "b");
+    const authorLast = extractSub("700", "a");
+    const publisher = extractSub("210", "c") || extractSub("214", "c");
+    const yearRaw = extractSub("210", "d") || extractSub("214", "d");
+    const pagesRaw = extractSub("215", "a");
+    const priceRaw = extractSub("010", "d");
+    const series225 = extractSub("225", "a");
+    const vol225 = extractSub("225", "v");
+
+    const yearMatch = yearRaw.match(/(19\d{2}|20\d{2})/);
+    const pagesMatch = pagesRaw.match(/(\d{2,4})\s*p/i) || pagesRaw.match(/(\d{2,4})/);
+    const priceMatch = priceRaw.match(/(\d+(?:[.,]\d{1,2})?)/);
+    const volMatch = vol225.match(/(\d+(?:[.,]\d+)?)/);
+
+    const isPoche = /poche|folio|pocket|j'ai lu|livre de poche|10-18|points/i.test(series225 + " " + publisher);
     return {
-      title: info.title || "Sans titre",
+      title: titleSub ? `${titleMain} : ${titleSub}` : titleMain,
+      author: [authorFirst, authorLast].filter(Boolean).join(" ").trim(),
+      publisher,
+      publication_year: yearMatch ? Number(yearMatch[1]) : null,
+      page_count: pagesMatch ? Number(pagesMatch[1]) : null,
+      price: priceMatch ? parseFloat(priceMatch[1].replace(",", ".")) : null,
+      format: isPoche ? "Poche" : "Broché",
+      series_name: !isPoche && series225 ? series225 : "",
+      series_volume: volMatch ? parseFloat(volMatch[1].replace(",", ".")) : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function enrichBookMetadata(queryOrIsbn) {
+  const q = String(queryOrIsbn || "").trim();
+  const cleanDigits = q.replace(/[^0-9X]/gi, "");
+  const isIsbn = cleanDigits.length === 10 || cleanDigits.length === 13;
+
+  const googleQuery = isIsbn ? `isbn:${cleanDigits}` : q;
+  const [bnfData, googleResp, olResp] = await Promise.all([
+    isIsbn ? fetchBnfByIsbn(cleanDigits) : Promise.resolve(null),
+    fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(googleQuery)}&maxResults=6`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    isIsbn
+      ? fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${cleanDigits}&format=json&jscmd=data`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      : Promise.resolve(null)
+  ]);
+
+  let items = (googleResp && googleResp.items) || [];
+  if (items.length === 0 && isIsbn) {
+    // Fallback query without isbn: prefix
+    const fb = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanDigits)}&maxResults=4`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    items = (fb && fb.items) || [];
+  }
+
+  const gInfo = (items[0] && items[0].volumeInfo) || {};
+  const olData = (olResp && olResp[`ISBN:${cleanDigits}`]) || {};
+
+  const rawTitle = (bnfData && bnfData.title) || gInfo.title || olData.title || "";
+  const { cleanTitle, seriesName, seriesVolume } = inferSeriesFromTitle(rawTitle);
+
+  const ids = gInfo.industryIdentifiers || [];
+  const isbnObj = ids.find((i) => i.type === "ISBN_13") || ids.find((i) => i.type === "ISBN_10") || {};
+  const finalIsbn = isIsbn ? cleanDigits : (isbnObj.identifier || "");
+
+  let cover = (gInfo.imageLinks && (gInfo.imageLinks.extraLarge || gInfo.imageLinks.large || gInfo.imageLinks.thumbnail || gInfo.imageLinks.smallThumbnail)) ||
+    (olData.cover && (olData.cover.large || olData.cover.medium)) ||
+    (finalIsbn ? `https://covers.openlibrary.org/b/isbn/${finalIsbn}-L.jpg` : "");
+  if (cover && cover.startsWith("http://")) cover = cover.replace("http://", "https://");
+
+  const author = (bnfData && bnfData.author) || (gInfo.authors && gInfo.authors.join(", ")) || (olData.authors && olData.authors.map((a) => a.name).join(", ")) || "";
+  const publisher = (bnfData && bnfData.publisher) || gInfo.publisher || (olData.publishers && olData.publishers[0] && olData.publishers[0].name) || "";
+  const pubYear = (bnfData && bnfData.publication_year) || (gInfo.publishedDate ? Number(String(gInfo.publishedDate).slice(0, 4)) || null : null);
+  const pageCount = (bnfData && bnfData.page_count) || Number(gInfo.pageCount || olData.number_of_pages || 320);
+
+  const blob = `${rawTitle} ${gInfo.description || ""} ${(gInfo.categories || []).join(" ")}`;
+  const { subg, tags } = inferSubgenresAndTags(blob);
+
+  const results = items.map((item) => {
+    const info = item.volumeInfo || {};
+    const itemIds = info.industryIdentifiers || [];
+    const itemIsbn = (itemIds.find((i) => i.type === "ISBN_13") || itemIds.find((i) => i.type === "ISBN_10") || {}).identifier || "";
+    let c = (info.imageLinks && (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail)) || "";
+    if (c.startsWith("http://")) c = c.replace("http://", "https://");
+    const inf = inferSeriesFromTitle(info.title || "");
+    const st = inferSubgenresAndTags(`${info.title || ""} ${info.description || ""} ${(info.categories || []).join(" ")}`);
+    return {
+      title: inf.cleanTitle || info.title || "Sans titre",
       author: (info.authors || ["Auteur inconnu"]).join(", "),
+      author_country: "France",
       publisher: info.publisher || "",
       publication_year: info.publishedDate ? Number(String(info.publishedDate).slice(0, 4)) || null : null,
       page_count: Number(info.pageCount || 300),
-      isbn: isbnObj.identifier || "",
-      cover_url: cover,
-      genres: info.categories || ["Fantasy"],
+      isbn: itemIsbn,
+      cover_url: c,
+      series_name: inf.seriesName || "",
+      series_volume: inf.seriesVolume,
+      genres: ["Fantasy"],
+      fantasy_subgenres: st.subg,
+      tags: st.tags,
+      format: "Broché",
+      price: null,
       popularity_score: info.averageRating ? Number(info.averageRating) : null
     };
   });
+
+  const best = {
+    isbn: finalIsbn,
+    title: cleanTitle || rawTitle || q,
+    author: author || "Auteur à compléter",
+    author_country: "France",
+    publisher,
+    publication_year: pubYear || new Date().getFullYear(),
+    page_count: pageCount || 320,
+    price: (bnfData && bnfData.price) || null,
+    format: (bnfData && bnfData.format) || "Broché",
+    series_name: seriesName || (bnfData && bnfData.series_name) || "",
+    series_volume: seriesVolume || (bnfData && bnfData.series_volume) || null,
+    genres: ["Fantasy"],
+    fantasy_subgenres: subg,
+    tags,
+    popularity_score: gInfo.averageRating ? Number(gInfo.averageRating) : null,
+    cover_url: cover
+  };
+
+  return { best, results: results.length > 0 ? results : [best] };
 }
 
 module.exports = async function handler(req, res) {
@@ -154,11 +317,12 @@ module.exports = async function handler(req, res) {
 
   try {
     const action = (req.query && req.query.action) || (req.body && req.body.action) || "bootstrap";
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 
-    if (action === "search_external") {
-      const q = (req.query && req.query.q) || (req.body && req.body.q) || "";
-      const results = await searchGoogleBooks(q);
-      return res.status(200).json({ ok: true, results });
+    if (action === "search_external" || action === "enrich_book") {
+      const q = (req.query && req.query.q) || body.q || "";
+      const { best, results } = await enrichBookMetadata(q);
+      return res.status(200).json({ ok: true, best, results });
     }
 
     const connStr = getConnectionString(req);
@@ -201,8 +365,6 @@ module.exports = async function handler(req, res) {
         active_timer: activeTimer
       });
     }
-
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 
     if (action === "save_timer") {
       const { book_id, is_running, start_time, accumulated_seconds, is_focused } = body;
@@ -296,14 +458,15 @@ module.exports = async function handler(req, res) {
 
     if (action === "add_book") {
       const genresJson = JSON.stringify(Array.isArray(body.genres) ? body.genres : parseJsonArray(body.genres || "Fantasy"));
+      const tagsJson = JSON.stringify(Array.isArray(body.tags) ? body.tags : parseJsonArray(body.tags || ""));
       const subgJson = JSON.stringify(Array.isArray(body.fantasy_subgenres) ? body.fantasy_subgenres : parseJsonArray(body.fantasy_subgenre || ""));
       const rows = await neonQuery(
         connStr,
         `INSERT INTO books
          (isbn, title, series_name, series_volume, author, author_country, publisher, publication_year,
-          page_count, price, format, genres, tags, fantasy_subgenre, popularity_score, cover_url,
+          page_count, chapter_count, price, format, genres, tags, fantasy_subgenre, popularity_score, cover_url,
           status, pal_month, pal_year, current_page, started_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'[]',$13,$14,$15,$16,$17,$18,$19,$20)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
          RETURNING id`,
         [
           body.isbn || null,
@@ -315,9 +478,11 @@ module.exports = async function handler(req, res) {
           body.publisher || null,
           body.publication_year ? Number(body.publication_year) : null,
           Math.max(Number(body.page_count || 1), 1),
+          body.chapter_count ? Number(body.chapter_count) : null,
           body.price ? Number(body.price) : null,
           body.format || "Broché",
           genresJson,
+          tagsJson,
           subgJson,
           body.popularity_score ? Number(body.popularity_score) : null,
           body.cover_url || null,
@@ -339,18 +504,20 @@ module.exports = async function handler(req, res) {
       let idx = 1;
 
       const allowed = [
-        "title", "author", "series_name", "series_volume", "page_count", "current_page",
-        "status", "pal_month", "pal_year", "format", "price", "cover_url",
+        "isbn", "title", "author", "author_country", "publisher", "publication_year",
+        "series_name", "series_volume", "page_count", "chapter_count", "current_page",
+        "status", "pal_month", "pal_year", "format", "price", "popularity_score", "cover_url",
         "started_at", "finished_at", "rating_global", "rating_pacing", "rating_chars",
-        "rating_world", "rating_writing", "rating_plot", "final_review", "fantasy_subgenre"
+        "rating_world", "rating_writing", "rating_plot", "final_review",
+        "genres", "tags", "fantasy_subgenre"
       ];
 
       for (const key of allowed) {
         if (key in data) {
           sets.push(`${key} = $${idx++}`);
           let v = data[key];
-          if (key === "fantasy_subgenre" && Array.isArray(v)) {
-            v = JSON.stringify(v);
+          if (["fantasy_subgenre", "genres", "tags"].includes(key)) {
+            v = JSON.stringify(Array.isArray(v) ? v : parseJsonArray(v || ""));
           }
           if (v === "") v = null;
           vals.push(v);

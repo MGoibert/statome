@@ -1,5 +1,5 @@
-const CACHE_NAME = "statome-pwa-v1";
-const STATIC_ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json"];
+const CACHE_NAME = "statome-pwa-v2";
+const STATIC_ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/html5-qrcode.min.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -23,17 +23,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request)
-        .then((resp) => {
-          if (resp && resp.status === 200 && event.request.method === "GET") {
-            const clone = resp.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return resp;
-        })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+    fetch(event.request)
+      .then((resp) => {
+        if (resp && resp.status === 200 && event.request.method === "GET") {
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return resp;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

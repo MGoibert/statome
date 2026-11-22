@@ -34,10 +34,10 @@ def render_tab_add_book():
     if "form_fill_version" not in st.session_state:
         st.session_state.form_fill_version = 0
 
-    # Sélection du mode d'acquisition (Recherche par défaut pour ne pas allumer la caméra)
+    # Sélection du mode d'acquisition (Scanner vidéo par défaut, avec bouton pour allumer la caméra)
     input_mode = st.radio(
         "Mode d'acquisition :",
-        ["🔍 Recherche ISBN / Titre", "📷 Scanner le code-barres (Vidéo)"],
+        ["📷 Scanner le code-barres (Vidéo)", "🔍 Recherche ISBN / Titre"],
         horizontal=True,
         key="add_mode_radio"
     )
