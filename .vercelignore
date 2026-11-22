@@ -1,0 +1,9 @@
+app.py
+requirements.txt
+core/
+views/
+venv/
+.streamlit/
+*.db
+*.pyc
+__pycache__/
