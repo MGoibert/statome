@@ -695,10 +695,68 @@ async function enrichBookMetadata(isbnOrQuery) {
   return { best: result, results: listResults };
 }
 
+// ==========================================
+// AUTHENTIFICATION & MULTI-TENANT (CRYPTO)
+// ==========================================
+const crypto = require("crypto");
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return `${salt}:${derived}`;
+}
+
+function verifyPassword(password, storedHash) {
+  if (!storedHash || !storedHash.includes(":")) return false;
+  const [salt, key] = storedHash.split(":");
+  const derived = crypto.scryptSync(String(password), salt, 64);
+  const keyBuf = Buffer.from(key, "hex");
+  if (derived.length !== keyBuf.length) return false;
+  return crypto.timingSafeEqual(derived, keyBuf);
+}
+
+function getAuthSecret(connStr) {
+  return crypto.createHash("sha256").update(`statome-jwt-secret:${connStr}`).digest("hex");
+}
+
+function createAuthToken(user, connStr) {
+  const payload = {
+    uid: Number(user.id),
+    email: user.email,
+    name: user.display_name || user.email.split("@")[0],
+    admin: Boolean(user.is_admin),
+    exp: Date.now() + 365 * 86400 * 1000 // 1 an de session permanente
+  };
+  const b64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", getAuthSecret(connStr)).update(b64).digest("base64url");
+  return `${b64}.${sig}`;
+}
+
+function verifyAuthToken(token, connStr) {
+  if (!token || !token.includes(".")) return null;
+  const [b64, sig] = token.split(".");
+  const expectedSig = crypto.createHmac("sha256", getAuthSecret(connStr)).update(b64).digest("base64url");
+  if (sig !== expectedSig) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function extractToken(req, body) {
+  const authHeader = req.headers["authorization"] || req.headers["x-auth-token"] || "";
+  if (authHeader.startsWith("Bearer ")) return authHeader.slice(7).trim();
+  if (authHeader) return authHeader.trim();
+  return (body && body.token) || (req.query && req.query.token) || "";
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-database-url");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-auth-token, x-database-url");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
@@ -707,6 +765,120 @@ module.exports = async function handler(req, res) {
   try {
     const action = (req.query && req.query.action) || (req.body && req.body.action) || "bootstrap";
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const connStr = getConnectionString(req);
+
+    // 1. Vérification du statut d'authentification (initialisation propriétaire vs login)
+    if (action === "auth_status") {
+      const countRows = await neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users");
+      const userCount = Number((countRows[0] && countRows[0].cnt) || 0);
+      const allowSignups = process.env.ALLOW_SIGNUPS === "true";
+      const token = extractToken(req, body);
+      const decoded = verifyAuthToken(token, connStr);
+      return res.status(200).json({
+        ok: true,
+        needs_setup: userCount === 0,
+        allow_signups: allowSignups,
+        authenticated: Boolean(decoded),
+        user: decoded || null
+      });
+    }
+
+    // 2. Configuration initiale du compte Propriétaire (uniquement si 0 utilisateur en base)
+    if (action === "auth_setup") {
+      const countRows = await neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users");
+      const userCount = Number((countRows[0] && countRows[0].cnt) || 0);
+      if (userCount > 0) {
+        return res.status(403).json({ ok: false, error: "Le compte propriétaire a déjà été configuré. Les inscriptions sont fermées." });
+      }
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const displayName = String(body.display_name || "Morgane").trim();
+      if (!email || password.length < 4) {
+        return res.status(400).json({ ok: false, error: "Veuillez saisir un email et un mot de passe (4 caractères min)." });
+      }
+      const pwHash = hashPassword(password);
+      const rows = await neonQuery(
+        connStr,
+        `INSERT INTO users (email, password_hash, display_name, is_admin, plan)
+         VALUES ($1, $2, $3, TRUE, 'premium')
+         RETURNING id, email, display_name, is_admin, plan`,
+        [email, pwHash, displayName]
+      );
+      const owner = rows[0];
+      const ownerId = Number(owner.id);
+
+      // Rattacher l'intégralité de la bibliothèque existante au compte Propriétaire
+      await Promise.all([
+        neonQuery(connStr, "UPDATE books SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId]),
+        neonQuery(connStr, "UPDATE reading_sessions SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId]),
+        neonQuery(connStr, "UPDATE book_notes SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId]),
+        neonQuery(connStr, "UPDATE active_timer SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId])
+      ]);
+
+      const token = createAuthToken(owner, connStr);
+      return res.status(200).json({
+        ok: true,
+        token,
+        user: { uid: ownerId, email: owner.email, name: owner.display_name, admin: true }
+      });
+    }
+
+    // 3. Connexion (Login)
+    if (action === "auth_login") {
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const rows = await neonQuery(connStr, "SELECT * FROM users WHERE LOWER(email) = $1 LIMIT 1", [email]);
+      if (!rows.length || !verifyPassword(password, rows[0].password_hash)) {
+        return res.status(401).json({ ok: false, error: "Email ou mot de passe incorrect." });
+      }
+      const u = rows[0];
+      const token = createAuthToken(u, connStr);
+      return res.status(200).json({
+        ok: true,
+        token,
+        user: { uid: Number(u.id), email: u.email, name: u.display_name || u.email, admin: Boolean(u.is_admin) }
+      });
+    }
+
+    // 4. Inscription publique (bloquée par défaut tant que ALLOW_SIGNUPS !== "true")
+    if (action === "auth_register") {
+      if (process.env.ALLOW_SIGNUPS !== "true") {
+        return res.status(403).json({ ok: false, error: "Les inscriptions publiques sont actuellement fermées." });
+      }
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const displayName = String(body.display_name || email.split("@")[0]).trim();
+      if (!email || password.length < 6) {
+        return res.status(400).json({ ok: false, error: "Email valide et mot de passe de 6 caractères minimum requis." });
+      }
+      const existing = await neonQuery(connStr, "SELECT id FROM users WHERE LOWER(email) = $1", [email]);
+      if (existing.length > 0) {
+        return res.status(400).json({ ok: false, error: "Un compte existe déjà avec cet email." });
+      }
+      const pwHash = hashPassword(password);
+      const rows = await neonQuery(
+        connStr,
+        `INSERT INTO users (email, password_hash, display_name, is_admin, plan)
+         VALUES ($1, $2, $3, FALSE, 'free')
+         RETURNING id, email, display_name, is_admin, plan`,
+        [email, pwHash, displayName]
+      );
+      const u = rows[0];
+      const token = createAuthToken(u, connStr);
+      return res.status(200).json({
+        ok: true,
+        token,
+        user: { uid: Number(u.id), email: u.email, name: u.display_name, admin: false }
+      });
+    }
+
+    // 5. Toutes les actions suivantes nécessitent un jeton utilisateur valide !
+    const token = extractToken(req, body);
+    const authUser = verifyAuthToken(token, connStr);
+    if (!authUser || !authUser.uid) {
+      return res.status(401).json({ ok: false, auth_required: true, error: "Authentification requise." });
+    }
+    const userId = Number(authUser.uid);
 
     if (action === "search_external" || action === "enrich_book") {
       const q = (req.query && req.query.q) || body.q || "";
@@ -714,14 +886,12 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, best, results });
     }
 
-    const connStr = getConnectionString(req);
-
     if (action === "bootstrap") {
       const [rawBooks, rawSessions, rawNotes, rawTimer] = await Promise.all([
-        neonQuery(connStr, "SELECT * FROM books ORDER BY id DESC"),
-        neonQuery(connStr, "SELECT * FROM reading_sessions ORDER BY start_time DESC"),
-        neonQuery(connStr, "SELECT * FROM book_notes ORDER BY page_number ASC NULLS LAST, created_at DESC"),
-        neonQuery(connStr, "SELECT * FROM active_timer WHERE id = 1").catch(() => [])
+        neonQuery(connStr, "SELECT * FROM books WHERE user_id = $1 ORDER BY id DESC", [userId]),
+        neonQuery(connStr, "SELECT * FROM reading_sessions WHERE user_id = $1 ORDER BY start_time DESC", [userId]),
+        neonQuery(connStr, "SELECT * FROM book_notes WHERE user_id = $1 ORDER BY page_number ASC NULLS LAST, created_at DESC", [userId]),
+        neonQuery(connStr, "SELECT * FROM active_timer WHERE id = $1 OR user_id = $1 ORDER BY updated_at DESC LIMIT 1", [userId]).catch(() => [])
       ]);
 
       const books = rawBooks.map(normalizeBook);
@@ -748,6 +918,7 @@ module.exports = async function handler(req, res) {
 
       return res.status(200).json({
         ok: true,
+        user: authUser,
         books,
         sessions,
         notes,
@@ -759,16 +930,17 @@ module.exports = async function handler(req, res) {
       const { book_id, is_running, start_time, accumulated_seconds, is_focused } = body;
       await neonQuery(
         connStr,
-        `INSERT INTO active_timer (id, book_id, is_running, start_time, accumulated_seconds, is_focused, updated_at)
-         VALUES (1, $1, $2, $3, $4, $5, NOW())
+        `INSERT INTO active_timer (id, user_id, book_id, is_running, start_time, accumulated_seconds, is_focused, updated_at)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, NOW())
          ON CONFLICT (id) DO UPDATE SET
+           user_id = EXCLUDED.user_id,
            book_id = EXCLUDED.book_id,
            is_running = EXCLUDED.is_running,
            start_time = EXCLUDED.start_time,
            accumulated_seconds = EXCLUDED.accumulated_seconds,
            is_focused = EXCLUDED.is_focused,
            updated_at = NOW()`,
-        [book_id || null, Boolean(is_running), start_time || null, Number(accumulated_seconds || 0), is_focused !== false]
+        [userId, book_id || null, Boolean(is_running), start_time || null, Number(accumulated_seconds || 0), is_focused !== false]
       );
       return res.status(200).json({ ok: true });
     }
@@ -776,7 +948,8 @@ module.exports = async function handler(req, res) {
     if (action === "clear_timer") {
       await neonQuery(
         connStr,
-        `UPDATE active_timer SET is_running = FALSE, start_time = NULL, accumulated_seconds = 0, book_id = NULL, updated_at = NOW() WHERE id = 1`
+        `UPDATE active_timer SET is_running = FALSE, start_time = NULL, accumulated_seconds = 0, book_id = NULL, updated_at = NOW() WHERE id = $1 OR user_id = $1`,
+        [userId]
       );
       return res.status(200).json({ ok: true });
     }
@@ -796,9 +969,9 @@ module.exports = async function handler(req, res) {
       await neonQuery(
         connStr,
         `INSERT INTO reading_sessions
-         (book_id, start_time, end_time, duration_minutes, start_page, end_page, pages_read, pages_per_hour, is_weekend, is_focused)
-         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [bookId, nowIso, durationMin, startPage, endPage, pagesRead, pagesPerHour, isWeekend, isFocused]
+         (user_id, book_id, start_time, end_time, duration_minutes, start_page, end_page, pages_read, pages_per_hour, is_weekend, is_focused)
+         VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [userId, bookId, nowIso, durationMin, startPage, endPage, pagesRead, pagesPerHour, isWeekend, isFocused]
       );
 
       await neonQuery(
@@ -807,29 +980,31 @@ module.exports = async function handler(req, res) {
          SET current_page = GREATEST(COALESCE(current_page, 0), $2),
              started_at = COALESCE(started_at, CURRENT_DATE),
              status = CASE WHEN status IN ('Bibliothèque', 'Wishlist', 'À acheter') THEN 'En cours' ELSE status END
-         WHERE id = $1`,
-        [bookId, endPage]
+         WHERE id = $1 AND user_id = $3`,
+        [bookId, endPage, userId]
       );
 
       await neonQuery(
         connStr,
-        `UPDATE active_timer SET is_running = FALSE, start_time = NULL, accumulated_seconds = 0, book_id = NULL, updated_at = NOW() WHERE id = 1`
+        `UPDATE active_timer SET is_running = FALSE, start_time = NULL, accumulated_seconds = 0, book_id = NULL, updated_at = NOW() WHERE id = $1 OR user_id = $1`,
+        [userId]
       ).catch(() => {});
 
       return res.status(200).json({ ok: true });
     }
 
     if (action === "delete_session") {
-      await neonQuery(connStr, "DELETE FROM reading_sessions WHERE id = $1", [Number(body.session_id)]);
+      await neonQuery(connStr, "DELETE FROM reading_sessions WHERE id = $1 AND user_id = $2", [Number(body.session_id), userId]);
       return res.status(200).json({ ok: true });
     }
 
     if (action === "add_note") {
       await neonQuery(
         connStr,
-        `INSERT INTO book_notes (book_id, created_at, page_number, chapter_number, note_type, content)
-         VALUES ($1, NOW(), $2, $3, $4, $5)`,
+        `INSERT INTO book_notes (user_id, book_id, created_at, page_number, chapter_number, note_type, content)
+         VALUES ($1, $2, NOW(), $3, $4, $5, $6)`,
         [
+          userId,
           Number(body.book_id),
           body.page_number ? Number(body.page_number) : null,
           body.chapter_number ? Number(body.chapter_number) : null,
@@ -841,7 +1016,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === "delete_note") {
-      await neonQuery(connStr, "DELETE FROM book_notes WHERE id = $1", [Number(body.note_id)]);
+      await neonQuery(connStr, "DELETE FROM book_notes WHERE id = $1 AND user_id = $2", [Number(body.note_id), userId]);
       return res.status(200).json({ ok: true });
     }
 
@@ -852,12 +1027,13 @@ module.exports = async function handler(req, res) {
       const rows = await neonQuery(
         connStr,
         `INSERT INTO books
-         (isbn, title, series_name, series_volume, author, author_country, publisher, publication_year,
+         (user_id, isbn, title, series_name, series_volume, author, author_country, publisher, publication_year,
           page_count, chapter_count, price, format, genres, tags, fantasy_subgenre, popularity_score, cover_url,
           status, pal_month, pal_year, current_page, started_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
          RETURNING id`,
         [
+          userId,
           body.isbn || null,
           body.title || "Sans titre",
           body.series_name || null,
@@ -915,13 +1091,14 @@ module.exports = async function handler(req, res) {
 
       if (sets.length > 0) {
         vals.push(bookId);
-        await neonQuery(connStr, `UPDATE books SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
+        vals.push(userId);
+        await neonQuery(connStr, `UPDATE books SET ${sets.join(", ")} WHERE id = $${idx} AND user_id = $${idx + 1}`, vals);
       }
       return res.status(200).json({ ok: true });
     }
 
     if (action === "delete_book") {
-      await neonQuery(connStr, "DELETE FROM books WHERE id = $1", [Number(body.book_id)]);
+      await neonQuery(connStr, "DELETE FROM books WHERE id = $1 AND user_id = $2", [Number(body.book_id), userId]);
       return res.status(200).json({ ok: true });
     }
 

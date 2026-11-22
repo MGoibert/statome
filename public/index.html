@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="StatOme" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="/styles.css?v=5" />
+  <link rel="stylesheet" href="/styles.css?v=6" />
   <script src="/html5-qrcode.min.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" defer></script>
   <title>StatOme — Suivi de Lecture</title>
@@ -19,24 +19,32 @@
       <span>📖</span>
       <span>StatOme</span>
     </div>
-    <div class="sync-badge" id="sync-badge" onclick="window.syncFromServer(true)" style="cursor:pointer;" title="Cliquer pour rafraîchir">
-      <span class="sync-dot" id="sync-dot"></span>
-      <span id="sync-text">Prêt</span>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="sync-badge" id="sync-badge" onclick="window.syncFromServer(true)" style="cursor:pointer;" title="Cliquer pour rafraîchir">
+        <span class="sync-dot" id="sync-dot"></span>
+        <span id="sync-text">Prêt</span>
+      </div>
+      <button class="btn" id="account-btn" style="padding:5px 10px;font-size:0.8rem;display:none;" onclick="window.openAccountModal()" title="Mon compte">
+        👤
+      </button>
     </div>
   </header>
 
   <main class="container">
-    <section id="view-reading"></section>
-    <section id="view-library" style="display:none;"></section>
-    <section id="view-add" style="display:none;"></section>
-    <section id="view-stats" style="display:none;"></section>
+    <section id="view-auth" style="display:none;"></section>
+    <div id="app-views">
+      <section id="view-reading"></section>
+      <section id="view-library" style="display:none;"></section>
+      <section id="view-add" style="display:none;"></section>
+      <section id="view-stats" style="display:none;"></section>
+    </div>
   </main>
 
   <dialog id="app-modal">
     <div id="modal-content"></div>
   </dialog>
 
-  <nav class="bottom-nav">
+  <nav class="bottom-nav" id="bottom-nav">
     <button class="nav-item active" data-tab="reading" onclick="window.switchTab('reading')">
       <span class="nav-icon">📖</span>
       <span>Lecture</span>
@@ -55,6 +63,6 @@
     </button>
   </nav>
 
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>

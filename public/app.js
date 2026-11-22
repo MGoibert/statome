@@ -8,6 +8,8 @@
 
 const CACHE_KEY = "statome_data_cache_v3";
 const TIMER_KEY = "statome_timer_local_v3";
+const AUTH_TOKEN_KEY = "statome_auth_token_v1";
+const AUTH_USER_KEY = "statome_auth_user_v1";
 
 const STATUS_COLORS = {
   "En cours": "#38BDF8",
@@ -174,26 +176,59 @@ function setSyncStatus(syncing, text) {
   }
 }
 
+function getAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function getAuthUser() {
+  try {
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function apiCall(action, payload = null) {
-  const isGet = !payload && action === "bootstrap";
+  const isGet = !payload && (action === "bootstrap" || action === "auth_status");
   const url = `/api?action=${action}`;
+  const token = getAuthToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const resp = await fetch(url, {
     method: isGet ? "GET" : "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: isGet ? undefined : JSON.stringify({ action, ...payload })
   });
   const data = await resp.json();
+  if (resp.status === 401 || data.auth_required) {
+    const err = new Error(data.error || "Authentification requise");
+    err.authRequired = true;
+    throw err;
+  }
   if (!data.ok) throw new Error(data.error || "Erreur serveur");
   return data;
 }
 
 window.syncFromServer = async function (manual = false) {
+  if (!getAuthToken()) {
+    await window.checkAuthAndBoot();
+    return;
+  }
   setSyncStatus(true, "Sync Neon...");
   try {
     const data = await apiCall("bootstrap");
     state.books = data.books || [];
     state.sessions = data.sessions || [];
     state.notes = data.notes || [];
+    if (data.user) {
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+    }
 
     if (!state.timer.isRunning && state.timer.accumulatedSec <= 0 && data.active_timer) {
       const st = data.active_timer;
@@ -209,8 +244,16 @@ window.syncFromServer = async function (manual = false) {
 
     saveLocalCache();
     setSyncStatus(false, "Synchronisé");
+    showAppShell(true);
     renderCurrentTab();
   } catch (err) {
+    if (err.authRequired) {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_USER_KEY);
+      localStorage.removeItem(CACHE_KEY);
+      await window.checkAuthAndBoot();
+      return;
+    }
     setSyncStatus(false, "Hors-Ligne");
     if (manual) alert("Impossible de joindre Neon : " + err.message);
   }
@@ -2574,10 +2617,164 @@ window.removeBook = async function (bookId) {
   await window.syncFromServer();
 };
 
+// ==========================================
+// 6. AUTHENTIFICATION & ESPACES UTILISATEURS ISOLÉS
+// ==========================================
+function showAppShell(authenticated) {
+  const authEl = document.getElementById("view-auth");
+  const viewsEl = document.getElementById("app-views");
+  const navEl = document.getElementById("bottom-nav");
+  const accBtn = document.getElementById("account-btn");
+  if (authEl) authEl.style.display = authenticated ? "none" : "block";
+  if (viewsEl) viewsEl.style.display = authenticated ? "block" : "none";
+  if (navEl) navEl.style.display = authenticated ? "grid" : "none";
+  if (accBtn) accBtn.style.display = authenticated ? "inline-flex" : "none";
+}
+
+function renderAuthView(needsSetup = false) {
+  showAppShell(false);
+  setSyncStatus(false, "Verrouillé");
+  const el = document.getElementById("view-auth");
+  if (!el) return;
+
+  if (needsSetup) {
+    el.innerHTML = `
+      <div class="card" style="max-width:440px;margin:24px auto;padding:24px;">
+        <div style="text-align:center;margin-bottom:16px;">
+          <div style="font-size:2.6rem;">🔐</div>
+          <h2 style="margin:8px 0 4px;">Configuration Propriétaire</h2>
+          <div style="font-size:0.83rem;color:var(--muted);">
+            Créez votre compte personnel pour rattacher votre bibliothèque actuelle et <b>verrouiller les inscriptions publiques</b>.
+          </div>
+        </div>
+        <label>Votre prénom</label>
+        <input id="auth-name" value="Morgane" placeholder="Morgane" />
+        <label>Votre email *</label>
+        <input type="email" id="auth-email" placeholder="votre@email.com" />
+        <label>Choisissez un mot de passe *</label>
+        <input type="password" id="auth-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')window.submitOwnerSetup()" />
+        <button class="btn btn-primary" style="width:100%;margin-top:18px;padding:14px;" onclick="window.submitOwnerSetup()">
+          🔒 Créer mon compte & Verrouiller l'accès
+        </button>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="card" style="max-width:420px;margin:28px auto;padding:24px;">
+        <div style="text-align:center;margin-bottom:16px;">
+          <div style="font-size:2.6rem;">📖</div>
+          <h2 style="margin:8px 0 4px;">Connexion à StatOme</h2>
+          <div style="font-size:0.8rem;color:#F59E0B;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);padding:6px 10px;border-radius:8px;margin-top:8px;">
+            🛡️ Accès privé — Les inscriptions publiques sont actuellement fermées.
+          </div>
+        </div>
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="votre@email.com" />
+        <label>Mot de passe</label>
+        <input type="password" id="login-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')window.submitLogin()" />
+        <button class="btn btn-primary" style="width:100%;margin-top:18px;padding:14px;" onclick="window.submitLogin()">
+          🔓 Se connecter (Session permanente 1 an)
+        </button>
+      </div>
+    `;
+  }
+}
+
+window.submitOwnerSetup = async function () {
+  const display_name = document.getElementById("auth-name").value.trim() || "Morgane";
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-pass").value;
+  if (!email || password.length < 4) {
+    return alert("Veuillez renseigner votre email et un mot de passe d'au moins 4 caractères.");
+  }
+  setSyncStatus(true, "Création...");
+  try {
+    const res = await apiCall("auth_setup", { display_name, email, password });
+    localStorage.setItem(AUTH_TOKEN_KEY, res.token);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(res.user));
+    showAppShell(true);
+    await window.syncFromServer();
+  } catch (e) {
+    setSyncStatus(false, "Erreur");
+    alert(e.message);
+  }
+};
+
+window.submitLogin = async function () {
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-pass").value;
+  if (!email || !password) return alert("Veuillez saisir votre email et votre mot de passe.");
+  setSyncStatus(true, "Connexion...");
+  try {
+    const res = await apiCall("auth_login", { email, password });
+    localStorage.setItem(AUTH_TOKEN_KEY, res.token);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(res.user));
+    showAppShell(true);
+    await window.syncFromServer();
+  } catch (e) {
+    setSyncStatus(false, "Verrouillé");
+    alert(e.message);
+  }
+};
+
+window.openAccountModal = function () {
+  const u = getAuthUser() || { name: "Morgane", email: "" };
+  openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">👤 Mon Compte StatOme</h3>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div style="font-weight:700;font-size:1rem;">${escapeHtml(u.name || "Propriétaire")}</div>
+      <div style="font-size:0.84rem;color:var(--muted);margin-top:2px;">${escapeHtml(u.email || "")}</div>
+      <div style="margin-top:10px;font-size:0.78rem;color:#34D399;">
+        🛡️ Espace personnel isolé • Session permanente active (365 jours)
+      </div>
+      <div style="margin-top:4px;font-size:0.78rem;color:#F59E0B;">
+        🔒 Inscriptions publiques : <b>Bloquées</b>
+      </div>
+    </div>
+    <button class="btn btn-danger" style="width:100%;" onclick="window.logoutUser()">
+      🚪 Se déconnecter de cet appareil
+    </button>
+  `);
+};
+
+window.logoutUser = async function () {
+  window.closeModal();
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(CACHE_KEY);
+  state.books = [];
+  state.sessions = [];
+  state.notes = [];
+  await window.checkAuthAndBoot();
+};
+
+window.checkAuthAndBoot = async function () {
+  const token = getAuthToken();
+  if (token) {
+    loadLocalCache();
+    showAppShell(true);
+    renderCurrentTab();
+    window.syncFromServer(false);
+    return;
+  }
+  // Pas de jeton local -> vérifier si le compte propriétaire doit être initialisé ou afficher l'écran de connexion
+  state.books = [];
+  state.sessions = [];
+  state.notes = [];
+  showAppShell(false);
+  try {
+    const status = await apiCall("auth_status");
+    renderAuthView(Boolean(status.needs_setup));
+  } catch {
+    renderAuthView(false);
+  }
+};
+
 // Boot PWA
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
-loadLocalCache();
-renderCurrentTab();
-window.syncFromServer(false);
+window.checkAuthAndBoot();
