@@ -24,24 +24,32 @@ const FRENCH_MONTHS = [
 ];
 
 const FANTASY_SUBGENRES = [
-  "High Fantasy",
-  "Epic Fantasy",
+  "High / Epic Fantasy",
   "Dark Fantasy",
   "Grimdark",
-  "Urban Fantasy",
-  "Romantasy",
-  "Cozy Fantasy",
-  "Gaslamp Fantasy",
-  "Heroic Fantasy",
-  "Sword & Sorcery",
-  "Mythic Fantasy",
+  "Romantasy / Romantic Fantasy",
+  "Cozy Fantasy / Tranche de vie",
+  "Flintlock Fantasy / Militaire",
   "Progression Fantasy / LitRPG",
-  "Low Fantasy",
-  "Science-Fantasy",
-  "Steampunk / Arcanepunk",
-  "Flintlock Fantasy",
-  "Portal Fantasy / Isekai",
-  "Historical Fantasy"
+  "Urban Fantasy",
+  "Fantasy Historique",
+  "Uchronie / Histoire Alternative",
+  "Contes & Réécritures (Retellings)",
+  "Fantasy de Mœurs (Fantasy of Manners)",
+  "Sword & Sorcery",
+  "Science Fantasy",
+  "Fantasy Mythologique",
+  "Réalisme Magique",
+  "Fantasy Humoristique",
+  "Steampunk",
+  "New Weird",
+  "Weird West / Fantasy Western",
+  "Romance Paranormale",
+  "Young Adult Fantasy",
+  "Exploration & Aventure",
+  "Dystopie / Post-Apocalyptique",
+  "Fantasy Classique",
+  "Autre"
 ];
 
 let html5QrScanner = null;
@@ -948,6 +956,8 @@ window.toggleDraftSubgenre = function (sg) {
   renderAddView();
 };
 
+let isProcessingScan = false;
+
 function populateDraftFromMeta(meta) {
   if (!meta) return;
   state.addDraft = {
@@ -971,7 +981,59 @@ function populateDraftFromMeta(meta) {
   };
 }
 
+function forceSyncDraftToDom() {
+  const d = state.addDraft;
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val !== null && val !== undefined ? val : "";
+  };
+  setVal("add-title", d.title);
+  setVal("add-author", d.author);
+  setVal("add-series", d.series_name);
+  setVal("add-vol", d.series_volume);
+  setVal("add-pages", d.page_count);
+  setVal("add-chaps", d.chapter_count);
+  setVal("add-price", d.price);
+  setVal("add-format", d.format);
+  setVal("add-publisher", d.publisher);
+  setVal("add-country", d.author_country);
+  setVal("add-isbn", d.isbn);
+  setVal("add-year", d.publication_year);
+  setVal("add-pop", d.popularity_score);
+  setVal("add-genres", d.genres);
+  setVal("add-tags", d.tags);
+  setVal("add-cover", d.cover_url);
+}
+
+window.handleDetectedIsbn = async function (clean) {
+  if (isProcessingScan) return;
+  isProcessingScan = true;
+  if (navigator.vibrate) navigator.vibrate(100);
+  state.lastScannedCode = clean;
+  state.addDraft.isbn = clean;
+  state.addDraft.title = "⏳ Récupération des infos (BnF / Goodreads)...";
+  await window.stopBarcodeCamera();
+  renderAddView();
+  setSyncStatus(true, `ISBN ${clean}...`);
+  try {
+    const data = await apiCall("enrich_book", { q: clean });
+    if (data && data.best) {
+      populateDraftFromMeta(data.best);
+      state.addDraft.isbn = clean;
+    }
+    setSyncStatus(false, "Synchronisé");
+    renderAddView();
+    forceSyncDraftToDom();
+  } catch (e) {
+    setSyncStatus(false, "Erreur");
+    alert("Erreur lors de la récupération de l'ISBN " + clean + " : " + e.message);
+  } finally {
+    isProcessingScan = false;
+  }
+};
+
 window.startBarcodeCamera = async function () {
+  isProcessingScan = false;
   state.cameraActive = true;
   renderAddView();
   try {
@@ -985,26 +1047,18 @@ window.startBarcodeCamera = async function () {
     await html5QrScanner.start(
       { facingMode: "environment" },
       {
-        fps: 12,
-        qrbox: { width: 260, height: 120 },
+        fps: 15,
+        qrbox: { width: 270, height: 130 },
         aspectRatio: 1.5
       },
       async (decodedText) => {
-        const clean = String(decodedText || "").replace(/[^0-9X]/gi, "");
-        if (clean.length === 10 || clean.length === 13) {
-          if (navigator.vibrate) navigator.vibrate(120);
-          state.lastScannedCode = clean;
-          await window.stopBarcodeCamera();
-          setSyncStatus(true, `ISBN ${clean}...`);
-          try {
-            const data = await apiCall("enrich_book", { q: clean });
-            populateDraftFromMeta(data.best);
-            state.addDraft.isbn = clean;
-            setSyncStatus(false, "Synchronisé");
-            renderAddView();
-          } catch (e) {
-            setSyncStatus(false, "Erreur");
-          }
+        if (isProcessingScan) return;
+        const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+        const isValidIsbn =
+          (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
+          clean.length === 10;
+        if (isValidIsbn) {
+          await window.handleDetectedIsbn(clean);
         }
       },
       () => {}
@@ -1039,6 +1093,7 @@ window.runExternalSearch = async function () {
     if (data.best) populateDraftFromMeta(data.best);
     setSyncStatus(false, "Synchronisé");
     renderAddView();
+    forceSyncDraftToDom();
   } catch (e) {
     setSyncStatus(false, "Erreur");
   }

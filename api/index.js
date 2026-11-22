@@ -1,7 +1,27 @@
 /**
  * StatOme — Ultra-Fast Serverless API for Vercel (Zero-Dependency Neon HTTP SQL)
- * Connects directly to Neon PostgreSQL over HTTPS in < 50ms without TCP cold starts.
+ * Includes the complete multi-source book enrichment cascade:
+ * 1. BnF SRU UNIMARC (recordSchema=unimarcXchange + Notice d'Autorité 102$a + Couverture HD)
+ * 2. Goodreads AutoComplete JSON (Note communauté /5, Saga & Tome, Résumé, Couverture HD Amazon)
+ * 3. OpenLibrary & Google Books API
  */
+
+const DEFAULT_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml,application/json;q=0.9,*/*;q=0.8",
+  "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
+};
+
+const ISO_COUNTRY_MAP = {
+  FR: "France", GB: "Royaume-Uni", UK: "Royaume-Uni", US: "États-Unis",
+  CA: "Canada", BE: "Belgique", CH: "Suisse", AU: "Australie",
+  NZ: "Nouvelle-Zélande", IE: "Irlande", DE: "Allemagne", AT: "Autriche",
+  IT: "Italie", ES: "Espagne", PT: "Portugal", JP: "Japon",
+  CN: "Chine", KR: "Corée du Sud", PL: "Pologne", RU: "Russie",
+  SE: "Suède", NO: "Norvège", DK: "Danemark", FI: "Finlande",
+  NL: "Pays-Bas", AR: "Argentine", MX: "Mexique", BR: "Brésil",
+  IN: "Inde", ZA: "Afrique du Sud"
+};
 
 function getConnectionString(req) {
   let url = process.env.DATABASE_URL || req.headers["x-database-url"] || "";
@@ -118,192 +138,561 @@ function normalizeNote(row, booksById) {
   };
 }
 
-function inferSeriesFromTitle(rawTitle) {
-  if (!rawTitle) return { cleanTitle: "", seriesName: "", seriesVolume: null };
-  let title = String(rawTitle).trim();
-  const patterns = [
-    /^(.*?)\s*[-–:,]\s*(?:Tome|T\.|Vol\.|Volume|Livre|Book)\s*(\d+(?:[.,]\d+)?)\s*[-–:,]?\s*(.*)$/i,
-    /^(.*?)\s*\((?:Tome|T\.|Vol\.|Volume|Livre|Book|#)\s*(\d+(?:[.,]\d+)?)\)$/i,
-    /^(.*?)\s*,\s*(?:Tome|T\.|Volume)\s*(\d+(?:[.,]\d+)?)$/i
-  ];
-  for (const pat of patterns) {
-    const m = title.match(pat);
-    if (m) {
-      const sName = m[1].trim();
-      const vol = parseFloat(String(m[2]).replace(",", "."));
-      const sub = m[3] ? m[3].trim() : "";
-      return {
-        cleanTitle: sub ? `${sName} T.${vol} : ${sub}` : title,
-        seriesName: sName,
-        seriesVolume: isNaN(vol) ? null : vol
-      };
+// ==========================================
+// MOTEUR D'ENRICHISSEMENT (Portage fidèle de core/metadata_fetcher.py)
+// ==========================================
+function unescapeHtml(str) {
+  return String(str || "")
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normStr(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractSeriesInfo(text) {
+  if (!text) return { seriesName: null, seriesVolume: null };
+  const cleaned = unescapeHtml(text).replace(/\s*\((?:French|English|Kindle|Paperback|Hardcover|Broché|Poche|Relié).*?\)\s*$/i, "").trim();
+
+  // 1. Format parenthèses Goodreads: "Titre (Nom de la série, #1)" ou "(Série, Tome 2)"
+  const parenRegex = /\(([^()]+?)(?:,\s*|\s+)(?:#|book\s*|vol(?:ume)?\.?\s*|tome\s*|t\.\s*)0*([0-9]+(?:[.,][0-9]+)?)(?:\s*(?:part(?:ie)?\.?|tome|vol\.?)\s*[0-9]+)?\)/gi;
+  let matches = [...cleaned.matchAll(parenRegex)];
+  if (matches.length === 0) {
+    const parenRegex2 = /\(([^(),]+?)(?:,\s*|\s+\()0*([0-9]+(?:[.,][0-9]+)?)\)?\)/gi;
+    matches = [...cleaned.matchAll(parenRegex2)];
+  }
+  if (matches.length > 0) {
+    const m = matches[matches.length - 1];
+    const sName = m[1].replace(/^[-:;,()\s]+|[-:;,()\s]+$/g, "");
+    if (sName.length > 1 && !/^(?:tome|vol|volume|part|partie|book|édition|edition)\b/i.test(sName)) {
+      let vol = parseFloat(m[2].replace(",", "."));
+      if (vol >= 1 && (Math.round((vol % 1) * 10) === 1 || Math.round((vol % 1) * 10) === 2)) {
+        vol = Math.floor(vol);
+      }
+      return { seriesName: sName, seriesVolume: isNaN(vol) ? null : vol };
     }
   }
-  return { cleanTitle: title, seriesName: "", seriesVolume: null };
+
+  // 2. Format "Nom de la série, Tome 2 : Titre"
+  const mPrefix = cleaned.match(/^([^:()]+?)[,.\s]+(?:tome|vol(?:ume)?\.?|t\.?)\s*0*([0-9]+(?:[.,][0-9]+)?)\s*:\s*(.+)$/i);
+  if (mPrefix) {
+    const sName = mPrefix[1].replace(/^[-:;,()\s]+|[-:;,()\s]+$/g, "");
+    const vol = parseFloat(mPrefix[2].replace(",", "."));
+    if (sName.length > 1) return { seriesName: sName, seriesVolume: isNaN(vol) ? null : vol };
+  }
+
+  // 3. Format "Série : X, Tome Y"
+  const mExp = cleaned.match(/(?:série|saga|cycle)\s*[:\-]?\s*([^,()]+),\s*(?:tome|vol(?:ume)?\.?)\s*0*([0-9]+(?:[.,][0-9]+)?)/i);
+  if (mExp) {
+    const sName = mExp[1].replace(/^[-:;,()\s]+|[-:;,()\s]+$/g, "");
+    const vol = parseFloat(mExp[2].replace(",", "."));
+    if (sName.length > 1) return { seriesName: sName, seriesVolume: isNaN(vol) ? null : vol };
+  }
+
+  return { seriesName: null, seriesVolume: null };
 }
 
-function inferSubgenresAndTags(textBlob) {
-  const low = String(textBlob || "").toLowerCase();
-  const subg = [];
+function cleanTitleFromSeries(title) {
+  if (!title) return "";
+  let cleaned = unescapeHtml(title);
+  cleaned = cleaned.replace(/\s*-\s*(?:tome|vol(?:ume)?\.?)\s*0*[0-9]+\s+.*$/i, "").trim();
+  while (/\s*\([^()]*\)\s*$/.test(cleaned)) {
+    cleaned = cleaned.replace(/\s*\([^()]*\)\s*$/, "").trim();
+  }
+  const mPref = cleaned.match(/^([^:]+?)[,.\s]+(?:tome|vol(?:ume)?\.?|t\.?)\s*0*[0-9]+(?:[.,][0-9]+)?\s*:\s*(.+)$/i);
+  if (mPref) cleaned = mPref[2].trim();
+  cleaned = cleaned.replace(/(?:,|\s+-)\s*(?:tome|vol(?:ume)?\.?|partie|part\.?)\s*[0-9]+\s*$/i, "").trim();
+  return cleaned.replace(/^[-:;.,\s]+|[-:;.,\s]+$/g, "");
+}
+
+function inferGenresAndTags(text, publisher = "") {
+  const combined = `${text} ${publisher}`.toLowerCase();
+  const genres = [];
   const tags = [];
-  if (low.includes("romantasy") || (low.includes("romance") && (low.includes("fae") || low.includes("fantasy") || low.includes("dragon")))) subg.push("Romantasy");
-  if (low.includes("cozy") || low.includes("cosy") || low.includes("witch") || low.includes("sorcière")) subg.push("Cozy Fantasy");
-  if (low.includes("grimdark")) subg.push("Grimdark");
-  if (low.includes("dark fantasy") || low.includes("gothic") || low.includes("gothique") || low.includes("vampire")) subg.push("Dark Fantasy");
-  if (low.includes("urban fantasy") || low.includes("urbaine")) subg.push("Urban Fantasy");
-  if (low.includes("epic") || low.includes("épique")) subg.push("Epic Fantasy");
-  if (low.includes("high fantasy")) subg.push("High Fantasy");
-  if (low.includes("steampunk")) subg.push("Steampunk / Arcanepunk");
-  if (low.includes("myth")) subg.push("Mythic Fantasy");
 
-  if (low.includes("witch") || low.includes("sorcière")) tags.push("Sorcières");
-  if (low.includes("dragon")) tags.push("Dragons");
-  if (low.includes("magic") || low.includes("magie")) tags.push("Magie");
-  if (low.includes("fae") || low.includes("faë")) tags.push("Faë");
-  if (low.includes("vampire")) tags.push("Vampires");
-  if (low.includes("academ")) tags.push("Dark Academia");
-  return { subg, tags };
+  const genreRules = [
+    [["magie", "sorcière", "sorcellerie", "witch", "dragon", "royaume", "elfe", "sortilège", "féerique", "fae", "bragelonne", "calix", "de saxus", "mnémos", "rivka", "cozy", "cosy", "fantasy"], "Fantasy"],
+    [["amour", "romance", "amant", "passion", "cœur", "love"], "Romance"],
+    [["1633", "xviie", "xixe", "siècle", "cardinal", "mousquetaire", "médiéval", "historique", "historical"], "Historique"],
+    [["enquête", "meurtre", "crime", "assassin", "mystère", "police", "thriller", "complot"], "Thriller / Polar"],
+    [["planète", "galaxie", "vaisseau", "futur", "dystopie", "science-fiction", "sci-fi", "spatial"], "Science-Fiction"],
+    [["vampire", "démon", "fantôme", "ténèbres", "horreur", "malédiction", "ombre", "dark"], "Fantastique / Sombre"]
+  ];
+  for (const [kws, label] of genreRules) {
+    if (kws.some((kw) => combined.includes(kw)) && !genres.includes(label)) genres.push(label);
+  }
+
+  const tagRules = [
+    [["sorcière", "sorcellerie", "witch", "coven"], "Sorcières"],
+    [["magie", "sortilège", "pouvoir", "magic", "alchimie"], "Magie"],
+    [["dragon"], "Dragons"],
+    [["fae", "faë", "fairies"], "Faë"],
+    [["vampire"], "Vampires"],
+    [["royaume", "cour", "trône", "politique", "complot", "intrigue", "king", "queen"], "Politique & Complots"],
+    [["académie", "école", "université", "academia"], "Académie"],
+    [["secret", "mystère", "énigme", "mystery"], "Secrets & Mystères"],
+    [["rival", "ennemi", "enemies"], "Enemies to Lovers"],
+    [["amitié", "allié", "équipe", "famille", "family"], "Found Family"]
+  ];
+  for (const [kws, label] of tagRules) {
+    if (kws.some((kw) => combined.includes(kw)) && !tags.includes(label)) tags.push(label);
+  }
+
+  if (genres.length === 0) genres.push("Fantasy");
+  return { genres: genres.slice(0, 4), tags: tags.slice(0, 6) };
 }
 
-async function fetchBnfByIsbn(isbn) {
+function inferFantasySubgenres(text = "", publisher = "", title = "", author = "") {
+  const combined = `${title} ${author} ${publisher} ${text}`.toLowerCase();
+  const rules = [
+    [["litrpg", "progression fantasy", "cultivation", "dungeon", "donjon", "will wight"], "Progression Fantasy / LitRPG"],
+    [["romantasy", "romantic fantasy", "fourth wing", "yarros", "acotar", "sarah j. maas", "fae", "enemies to lovers", "romance"], "Romantasy / Romantic Fantasy"],
+    [["flintlock", "powder mage", "mousquet", "mousquetaire", "lames du cardinal", "pierre pevel", "1633"], "Flintlock Fantasy / Militaire"],
+    [["grimdark", "poppy war", "kuang", "abercrombie", "john gwynne", "malice", "guerre sanglante"], "Grimdark"],
+    [["cozy fantasy", "cosy fantasy", "cozy", "cosy", "slice of life", "tranche de vie", "travis baldree", "rewitched", "lucy jane wood", "salon de thé"], "Cozy Fantasy / Tranche de vie"],
+    [["retelling", "réécriture", "conte", "fairy tale"], "Contes & Réécritures (Retellings)"],
+    [["uchronie", "alternate history", "naomi novik", "susanna clarke"], "Uchronie / Histoire Alternative"],
+    [["fantasy historique", "historical fantasy", "guy gavriel kay", "jacquelyn benson"], "Fantasy Historique"],
+    [["sword and sorcery", "sword & sorcery", "conan", "épée"], "Sword & Sorcery"],
+    [["science fantasy", "tamsyn muir", "jemisin", "absolu", "margot dessenne"], "Science Fantasy"],
+    [["steampunk", "vapeur", "victorien"], "Steampunk"],
+    [["urban fantasy", "fantastique urbain", "dresden", "patricia briggs"], "Urban Fantasy"],
+    [["dark fantasy", "vampire", "démon", "nécromancie", "anouck faure", "cité diaphane"], "Dark Fantasy"],
+    [["epic fantasy", "high fantasy", "tolkien", "sanderson", "gwynne", "royaume", "épopée"], "High / Epic Fantasy"],
+    [["mythic", "mythologie", "mythologique", "madeline miller", "dieux"], "Fantasy Mythologique"],
+    [["young adult", "ya fantasy", "bardugo", "livre de poche jeunesse"], "Young Adult Fantasy"]
+  ];
+  const detected = [];
+  for (const [kws, label] of rules) {
+    if (kws.some((kw) => combined.includes(kw)) && !detected.includes(label)) detected.push(label);
+  }
+  return detected.slice(0, 3);
+}
+
+async function fetchBnfAuthorCountry(authorRecordId) {
+  if (!authorRecordId) return null;
   try {
-    const clean = isbn.replace(/[^0-9X]/gi, "");
-    if (clean.length < 10) return null;
-    const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&query=${encodeURIComponent(`bib.isbn adj "${clean}"`)}&recordSchema=unimarcxchange&maximumRecords=1`;
-    const resp = await fetch(url);
+    const url = `https://catalogue.bnf.fr/api/SRU?operation=searchRetrieve&version=1.2&query=aut.recordid+all+"${encodeURIComponent(authorRecordId)}"&recordSchema=unimarcXchange&maximumRecords=1`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
     if (!resp.ok) return null;
     const xml = await resp.text();
-    const extractSub = (tag, code) => {
-      const reg = new RegExp(`<mxc:datafield[^>]*tag="${tag}"[^>]*>[\\s\\S]*?<mxc:subfield[^>]*code="${code}"[^>]*>([\\s\\S]*?)<\\/mxc:subfield>`, "i");
-      const m = xml.match(reg);
-      return m ? m[1].replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim() : "";
-    };
-    const titleMain = extractSub("200", "a");
-    if (!titleMain) return null;
-    const titleSub = extractSub("200", "e");
-    const authorFirst = extractSub("700", "b");
-    const authorLast = extractSub("700", "a");
-    const publisher = extractSub("210", "c") || extractSub("214", "c");
-    const yearRaw = extractSub("210", "d") || extractSub("214", "d");
-    const pagesRaw = extractSub("215", "a");
-    const priceRaw = extractSub("010", "d");
-    const series225 = extractSub("225", "a");
-    const vol225 = extractSub("225", "v");
-
-    const yearMatch = yearRaw.match(/(19\d{2}|20\d{2})/);
-    const pagesMatch = pagesRaw.match(/(\d{2,4})\s*p/i) || pagesRaw.match(/(\d{2,4})/);
-    const priceMatch = priceRaw.match(/(\d+(?:[.,]\d{1,2})?)/);
-    const volMatch = vol225.match(/(\d+(?:[.,]\d+)?)/);
-
-    const isPoche = /poche|folio|pocket|j'ai lu|livre de poche|10-18|points/i.test(series225 + " " + publisher);
-    return {
-      title: titleSub ? `${titleMain} : ${titleSub}` : titleMain,
-      author: [authorFirst, authorLast].filter(Boolean).join(" ").trim(),
-      publisher,
-      publication_year: yearMatch ? Number(yearMatch[1]) : null,
-      page_count: pagesMatch ? Number(pagesMatch[1]) : null,
-      price: priceMatch ? parseFloat(priceMatch[1].replace(",", ".")) : null,
-      format: isPoche ? "Poche" : "Broché",
-      series_name: !isPoche && series225 ? series225 : "",
-      series_volume: volMatch ? parseFloat(volMatch[1].replace(",", ".")) : null
-    };
-  } catch {
-    return null;
-  }
+    const df102 = xml.match(/<mxc:datafield[^>]*tag="102"[^>]*>([\s\S]*?)<\/mxc:datafield>/i);
+    if (df102) {
+      const sfa = df102[1].match(/<mxc:subfield[^>]*code="a"[^>]*>([\s\S]*?)<\/mxc:subfield>/i);
+      if (sfa) {
+        const code = sfa[1].trim().toUpperCase();
+        if (ISO_COUNTRY_MAP[code]) return ISO_COUNTRY_MAP[code];
+      }
+    }
+  } catch {}
+  return null;
 }
 
-async function enrichBookMetadata(queryOrIsbn) {
-  const q = String(queryOrIsbn || "").trim();
-  const cleanDigits = q.replace(/[^0-9X]/gi, "");
-  const isIsbn = cleanDigits.length === 10 || cleanDigits.length === 13;
+async function fetchFromBnf(isbnOrQuery) {
+  const data = {};
+  try {
+    const cleanQ = String(isbnOrQuery || "").replace(/-/g, "").trim();
+    const isIsbn = /^\d{10}(\d{3})?$/.test(cleanQ);
+    const queryStr = isIsbn
+      ? `bib.isbn+adj+"${cleanQ}"`
+      : `bib.anywhere+all+"${encodeURIComponent(isbnOrQuery)}"`;
 
-  const googleQuery = isIsbn ? `isbn:${cleanDigits}` : q;
-  const [bnfData, googleResp, olResp] = await Promise.all([
-    isIsbn ? fetchBnfByIsbn(cleanDigits) : Promise.resolve(null),
-    fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(googleQuery)}&maxResults=6`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    isIsbn
-      ? fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${cleanDigits}&format=json&jscmd=data`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-      : Promise.resolve(null)
-  ]);
+    // IMPORTANT: recordSchema=unimarcXchange (with capital X!)
+    const url = `https://catalogue.bnf.fr/api/SRU?operation=searchRetrieve&version=1.2&query=${queryStr}&recordSchema=unimarcXchange&maximumRecords=1`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+    if (!resp.ok) return data;
+    const xml = await resp.text();
+    if (!xml.includes("<mxc:record")) return data;
 
-  let items = (googleResp && googleResp.items) || [];
-  if (items.length === 0 && isIsbn) {
-    // Fallback query without isbn: prefix
-    const fb = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanDigits)}&maxResults=4`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    items = (fb && fb.items) || [];
-  }
-
-  const gInfo = (items[0] && items[0].volumeInfo) || {};
-  const olData = (olResp && olResp[`ISBN:${cleanDigits}`]) || {};
-
-  const rawTitle = (bnfData && bnfData.title) || gInfo.title || olData.title || "";
-  const { cleanTitle, seriesName, seriesVolume } = inferSeriesFromTitle(rawTitle);
-
-  const ids = gInfo.industryIdentifiers || [];
-  const isbnObj = ids.find((i) => i.type === "ISBN_13") || ids.find((i) => i.type === "ISBN_10") || {};
-  const finalIsbn = isIsbn ? cleanDigits : (isbnObj.identifier || "");
-
-  let cover = (gInfo.imageLinks && (gInfo.imageLinks.extraLarge || gInfo.imageLinks.large || gInfo.imageLinks.thumbnail || gInfo.imageLinks.smallThumbnail)) ||
-    (olData.cover && (olData.cover.large || olData.cover.medium)) ||
-    (finalIsbn ? `https://covers.openlibrary.org/b/isbn/${finalIsbn}-L.jpg` : "");
-  if (cover && cover.startsWith("http://")) cover = cover.replace("http://", "https://");
-
-  const author = (bnfData && bnfData.author) || (gInfo.authors && gInfo.authors.join(", ")) || (olData.authors && olData.authors.map((a) => a.name).join(", ")) || "";
-  const publisher = (bnfData && bnfData.publisher) || gInfo.publisher || (olData.publishers && olData.publishers[0] && olData.publishers[0].name) || "";
-  const pubYear = (bnfData && bnfData.publication_year) || (gInfo.publishedDate ? Number(String(gInfo.publishedDate).slice(0, 4)) || null : null);
-  const pageCount = (bnfData && bnfData.page_count) || Number(gInfo.pageCount || olData.number_of_pages || 320);
-
-  const blob = `${rawTitle} ${gInfo.description || ""} ${(gInfo.categories || []).join(" ")}`;
-  const { subg, tags } = inferSubgenresAndTags(blob);
-
-  const results = items.map((item) => {
-    const info = item.volumeInfo || {};
-    const itemIds = info.industryIdentifiers || [];
-    const itemIsbn = (itemIds.find((i) => i.type === "ISBN_13") || itemIds.find((i) => i.type === "ISBN_10") || {}).identifier || "";
-    let c = (info.imageLinks && (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail)) || "";
-    if (c.startsWith("http://")) c = c.replace("http://", "https://");
-    const inf = inferSeriesFromTitle(info.title || "");
-    const st = inferSubgenresAndTags(`${info.title || ""} ${info.description || ""} ${(info.categories || []).join(" ")}`);
-    return {
-      title: inf.cleanTitle || info.title || "Sans titre",
-      author: (info.authors || ["Auteur inconnu"]).join(", "),
-      author_country: "France",
-      publisher: info.publisher || "",
-      publication_year: info.publishedDate ? Number(String(info.publishedDate).slice(0, 4)) || null : null,
-      page_count: Number(info.pageCount || 300),
-      isbn: itemIsbn,
-      cover_url: c,
-      series_name: inf.seriesName || "",
-      series_volume: inf.seriesVolume,
-      genres: ["Fantasy"],
-      fantasy_subgenres: st.subg,
-      tags: st.tags,
-      format: "Broché",
-      price: null,
-      popularity_score: info.averageRating ? Number(info.averageRating) : null
+    const getFieldBlocks = (tag) => {
+      const re = new RegExp(`<mxc:datafield[^>]*tag="${tag}"[^>]*>([\\s\\S]*?)<\\/mxc:datafield>`, "gi");
+      return [...xml.matchAll(re)].map((m) => m[1]);
     };
-  });
+    const getSub = (block, code) => {
+      const re = new RegExp(`<mxc:subfield[^>]*code="${code}"[^>]*>([\\s\\S]*?)<\\/mxc:subfield>`, "i");
+      const m = block.match(re);
+      return m ? unescapeHtml(m[1]) : "";
+    };
 
-  const best = {
-    isbn: finalIsbn,
-    title: cleanTitle || rawTitle || q,
-    author: author || "Auteur à compléter",
+    const recMatch = xml.match(/<mxc:record[^>]*id="([^"]+)"/i);
+    const arkId = recMatch ? recMatch[1] : "";
+
+    // 010: ISBN ($a), format ($b), price ($d)
+    for (const b of getFieldBlocks("010")) {
+      const sfa = getSub(b, "a").replace(/\D/g, "");
+      if ((sfa.length === 10 || sfa.length === 13) && !data.isbn) data.isbn = sfa;
+      const sfb = getSub(b, "b").toLowerCase();
+      if (sfb.includes("rel") || sfb.includes("cart")) data.format = "Relié";
+      else if (sfb.includes("poche")) data.format = "Poche";
+      else if (sfb.includes("br")) data.format = "Broché";
+      const sfd = getSub(b, "d");
+      const pm = sfd.match(/(\d+(?:[.,]\d{1,2})?)/);
+      if (pm) {
+        const pv = parseFloat(pm[1].replace(",", "."));
+        if (pv >= 1 && pv <= 300) data.price = Math.round(pv * 100) / 100;
+      }
+    }
+
+    // 073: EAN-13
+    for (const b of getFieldBlocks("073")) {
+      const sfa = getSub(b, "a").replace(/\D/g, "");
+      if (sfa.length === 13) data.isbn = sfa;
+    }
+
+    // 101: Original language ($c)
+    let origLang = "";
+    for (const b of getFieldBlocks("101")) {
+      const sfc = getSub(b, "c").toLowerCase();
+      if (sfc) origLang = sfc;
+    }
+
+    // 200: Title ($a), Subtitle ($e), Author ($f)
+    for (const b of getFieldBlocks("200")) {
+      const sfa = getSub(b, "a");
+      if (sfa) data.title = sfa;
+      const sfe = getSub(b, "e");
+      if (sfe) {
+        const { seriesName, seriesVolume } = extractSeriesInfo(sfe);
+        if (seriesName) {
+          data.series_name = seriesName;
+          data.series_volume = seriesVolume;
+        }
+      }
+      const sff = getSub(b, "f");
+      if (sff && !data.author) data.author = sff;
+    }
+
+    // 214 / 210: Publisher ($c), Year ($d)
+    for (const tag of ["214", "210"]) {
+      for (const b of getFieldBlocks(tag)) {
+        const sfc = getSub(b, "c").replace(/^[\[\]\s:]+|[\[\]\s:]+$/g, "");
+        if (sfc && !sfc.toLowerCase().includes("impr.") && !data.publisher) {
+          data.publisher = sfc;
+        }
+        const sfd = getSub(b, "d");
+        const ym = sfd.match(/\b(19\d\d|20\d\d)\b/);
+        if (ym && !data.publication_year) data.publication_year = Number(ym[1]);
+      }
+    }
+
+    // 215: Page count ($a)
+    for (const b of getFieldBlocks("215")) {
+      const sfa = getSub(b, "a");
+      const pm = sfa.match(/(\d+)\s*p\b/i) || sfa.match(/(\d{2,4})/);
+      if (pm) data.page_count = Number(pm[1]);
+    }
+
+    // 461 / 410 / 225: Series ($t or $a) & Volume ($v)
+    for (const tag of ["461", "410", "225"]) {
+      for (const b of getFieldBlocks(tag)) {
+        const sft = getSub(b, "t") || getSub(b, "a");
+        const sfv = getSub(b, "v");
+        if (sft && /poche|folio|pocket|j'ai lu|livre de poche|10-18|points/i.test(sft)) {
+          data.format = "Poche";
+        } else if (sft && sfv && !data.series_name) {
+          const vm = sfv.match(/(\d+(?:[.,]\d+)?)/);
+          if (vm) {
+            data.series_name = sft;
+            data.series_volume = parseFloat(vm[1].replace(",", "."));
+          }
+        }
+      }
+    }
+
+    // 700: Author ($b First, $a Last, $3 Authority ID)
+    for (const b of getFieldBlocks("700")) {
+      const sfa = getSub(b, "a");
+      const sfb = getSub(b, "b");
+      if (sfa) data.author = `${sfb} ${sfa}`.trim();
+      const sf3 = getSub(b, "3");
+      if (sf3) {
+        const country = await fetchBnfAuthorCountry(sf3);
+        if (country) data.author_country = country;
+      }
+    }
+
+    if (!data.author_country && origLang) {
+      const langMap = {
+        eng: "Royaume-Uni", jpn: "Japon", ger: "Allemagne", deu: "Allemagne",
+        spa: "Espagne", ita: "Italie", pol: "Pologne", rus: "Russie", swe: "Suède"
+      };
+      if (langMap[origLang]) data.author_country = langMap[origLang];
+    }
+
+    // 856: BnF official HD cover
+    if (arkId) {
+      for (const b of getFieldBlocks("856")) {
+        const sfb = getSub(b, "b").toLowerCase();
+        if (sfb.includes("couverture")) {
+          data.cover_url = `https://catalogue.bnf.fr/couverture?appName=NE&idArk=${arkId}&couverture=1`;
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("BnF error:", e);
+  }
+  return data;
+}
+
+async function fetchFromGoodreads(query) {
+  const data = {};
+  if (!query) return data;
+  try {
+    const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(query.trim())}`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+    if (!resp.ok) return data;
+    const items = await resp.json();
+    if (!Array.isArray(items) || items.length === 0) return data;
+
+    let bestItem = items[0];
+    for (const it of items) {
+      if (Number(it.avgRating || 0) > 0 && Number(it.ratingsCount || 0) > Number(bestItem.ratingsCount || 0)) {
+        bestItem = it;
+      }
+    }
+
+    const rawTitle = unescapeHtml(bestItem.title || "");
+    const bareTitle = cleanTitleFromSeries(bestItem.bookTitleBare || rawTitle);
+    if (bareTitle) data.title = bareTitle;
+
+    const bestWid = bestItem.workId;
+    const bestNormT = normStr(bareTitle);
+
+    for (const it of [bestItem, ...items]) {
+      const candTitle = unescapeHtml(it.title || "");
+      const { seriesName, seriesVolume } = extractSeriesInfo(candTitle);
+      if (seriesName && seriesVolume !== null) {
+        const candBare = normStr(cleanTitleFromSeries(it.bookTitleBare || candTitle));
+        if ((bestWid && it.workId === bestWid) || (bestNormT && candBare === bestNormT)) {
+          data.series_name = seriesName;
+          data.series_volume = seriesVolume;
+          break;
+        }
+      }
+    }
+
+    if (Number(bestItem.avgRating || 0) > 0) {
+      data.popularity_score = Math.round(Number(bestItem.avgRating) * 100) / 100;
+    }
+    if (Number(bestItem.numPages || 0) > 0) {
+      data.page_count = Number(bestItem.numPages);
+    }
+    if (bestItem.author && bestItem.author.name) {
+      data.author = unescapeHtml(bestItem.author.name);
+    }
+    const imgUrl = String(bestItem.imageUrl || "");
+    if (imgUrl && !imgUrl.includes("nophoto")) {
+      data.cover_url = imgUrl
+        .replace(/\._S[XY]\d+_\./g, ".")
+        .replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".");
+    }
+    const descHtml = (bestItem.description && bestItem.description.html) || "";
+    if (descHtml) {
+      data.summary = unescapeHtml(descHtml);
+      const { genres, tags } = inferGenresAndTags(`${rawTitle} ${data.summary}`);
+      if (genres.length) data.genres = genres;
+      if (tags.length) data.tags = tags;
+    }
+  } catch (e) {
+    console.warn("Goodreads error:", e);
+  }
+  return data;
+}
+
+async function fetchFromOpenLibrary(isbnOrQuery) {
+  const data = {};
+  const cleanQ = String(isbnOrQuery || "").replace(/-/g, "").trim();
+  const isIsbn = /^\d{10}(\d{3})?$/.test(cleanQ);
+  try {
+    if (isIsbn) {
+      const resp = await fetch(`https://openlibrary.org/isbn/${cleanQ}.json`, { headers: DEFAULT_HEADERS });
+      if (resp.ok) {
+        const item = await resp.json();
+        if (item.title) data.title = item.title;
+        if (item.number_of_pages) data.page_count = Number(item.number_of_pages);
+        if (item.publish_date) {
+          const ym = String(item.publish_date).match(/\b(19\d\d|20\d\d)\b/);
+          if (ym) data.publication_year = Number(ym[1]);
+        }
+        if (Array.isArray(item.publishers) && item.publishers[0]) data.publisher = item.publishers[0];
+        if (Array.isArray(item.covers) && item.covers[0]) {
+          data.cover_url = `https://covers.openlibrary.org/b/id/${item.covers[0]}-L.jpg`;
+        }
+      }
+    }
+  } catch {}
+  return data;
+}
+
+async function fetchFromGoogleBooks(isbnOrQuery) {
+  const data = {};
+  const results = [];
+  const cleanQ = String(isbnOrQuery || "").replace(/-/g, "").trim();
+  const isIsbn = /^\d{10}(\d{3})?$/.test(cleanQ);
+  const qParam = isIsbn ? `isbn:${cleanQ}` : isbnOrQuery;
+  try {
+    let resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(qParam)}&maxResults=6`);
+    let json = resp.ok ? await resp.json() : null;
+    let items = (json && json.items) || [];
+    if (items.length === 0 && isIsbn) {
+      resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanQ)}&maxResults=4`);
+      json = resp.ok ? await resp.json() : null;
+      items = (json && json.items) || [];
+    }
+
+    for (const it of items) {
+      const vol = it.volumeInfo || {};
+      const ids = vol.industryIdentifiers || [];
+      const isbnObj = ids.find((i) => i.type === "ISBN_13") || ids.find((i) => i.type === "ISBN_10") || {};
+      let cover = (vol.imageLinks && (vol.imageLinks.thumbnail || vol.imageLinks.smallThumbnail)) || "";
+      if (cover) {
+        cover = cover.replace("http://", "https://").replace(/&edge=curl/g, "");
+      }
+      const { seriesName, seriesVolume } = extractSeriesInfo(vol.subtitle || vol.title || "");
+      const cleanT = cleanTitleFromSeries(vol.title || "");
+      const ym = String(vol.publishedDate || "").match(/\b(19\d\d|20\d\d)\b/);
+      const itemData = {
+        isbn: isbnObj.identifier || (isIsbn ? cleanQ : ""),
+        title: cleanT || vol.title || "",
+        author: (vol.authors || []).join(", "),
+        publisher: vol.publisher || "",
+        publication_year: ym ? Number(ym[1]) : null,
+        page_count: vol.pageCount ? Number(vol.pageCount) : null,
+        series_name: seriesName || "",
+        series_volume: seriesVolume,
+        cover_url: cover,
+        popularity_score: vol.averageRating ? Number(vol.averageRating) : null,
+        description: vol.description || ""
+      };
+      results.push(itemData);
+    }
+
+    if (results[0]) Object.assign(data, results[0]);
+  } catch {}
+  return { data, results };
+}
+
+async function enrichBookMetadata(isbnOrQuery) {
+  const cleanInput = String(isbnOrQuery || "").trim();
+  const digitsOnly = cleanInput.replace(/[^0-9Xx]/g, "").toUpperCase();
+  const isIsbn = (digitsOnly.length === 10 || digitsOnly.length === 13) &&
+    (digitsOnly.startsWith("978") || digitsOnly.startsWith("979") || digitsOnly.length === 10);
+  const isbn = isIsbn ? digitsOnly : "";
+
+  const result = {
+    isbn,
+    title: "",
+    series_name: "",
+    series_volume: null,
+    author: "",
     author_country: "France",
-    publisher,
-    publication_year: pubYear || new Date().getFullYear(),
-    page_count: pageCount || 320,
-    price: (bnfData && bnfData.price) || null,
-    format: (bnfData && bnfData.format) || "Broché",
-    series_name: seriesName || (bnfData && bnfData.series_name) || "",
-    series_volume: seriesVolume || (bnfData && bnfData.series_volume) || null,
+    publisher: "",
+    publication_year: new Date().getFullYear(),
+    page_count: 300,
+    chapter_count: null,
+    price: null,
+    format: "Broché",
     genres: ["Fantasy"],
-    fantasy_subgenres: subg,
-    tags,
-    popularity_score: gInfo.averageRating ? Number(gInfo.averageRating) : null,
-    cover_url: cover
+    tags: [],
+    fantasy_subgenres: [],
+    popularity_score: null,
+    cover_url: ""
   };
 
-  return { best, results: results.length > 0 ? results : [best] };
+  // Run BnF, Goodreads (initial), OpenLibrary, and Google Books in parallel for maximum speed!
+  const [bnfData, grInitial, olData, gbRes] = await Promise.all([
+    fetchFromBnf(isbn || cleanInput),
+    fetchFromGoodreads(isbn || cleanInput),
+    fetchFromOpenLibrary(isbn || cleanInput),
+    fetchFromGoogleBooks(isbn || cleanInput)
+  ]);
+
+  // 1. Apply BnF (Official French Edition Authority)
+  for (const [k, v] of Object.entries(bnfData)) {
+    if (v !== null && v !== undefined && v !== "") result[k] = v;
+  }
+
+  // 2. If Goodreads by ISBN didn't match (common for French ISBNs), query Goodreads by Title + Author!
+  let grData = grInitial;
+  const knownTitle = result.title || (gbRes.data && gbRes.data.title) || olData.title || "";
+  const knownAuthor = result.author || (gbRes.data && gbRes.data.author) || "";
+  if ((!grData.popularity_score || !grData.series_name) && knownTitle) {
+    const qTitleAuth = `${cleanTitleFromSeries(knownTitle)} ${knownAuthor}`.trim();
+    if (qTitleAuth && qTitleAuth.toLowerCase() !== (isbn || cleanInput).toLowerCase()) {
+      const grFallback = await fetchFromGoodreads(qTitleAuth);
+      for (const [k, v] of Object.entries(grFallback)) {
+        if (v !== null && v !== undefined && v !== "" && !grData[k]) grData[k] = v;
+      }
+    }
+  }
+
+  // 3. Merge Goodreads
+  if (grData.popularity_score) result.popularity_score = grData.popularity_score;
+  if (grData.genres && grData.genres.length) result.genres = grData.genres;
+  if (grData.tags && grData.tags.length) result.tags = grData.tags;
+  if (grData.series_name && !result.series_name) {
+    result.series_name = grData.series_name;
+    result.series_volume = grData.series_volume;
+  }
+  if (grData.cover_url && !result.cover_url) result.cover_url = grData.cover_url;
+  if (grData.title && !result.title) result.title = grData.title;
+  if (grData.author && !result.author) result.author = grData.author;
+  if (grData.page_count && !bnfData.page_count) result.page_count = grData.page_count;
+
+  // 4. Merge OpenLibrary & Google Books for any missing fields
+  for (const src of [olData, gbRes.data || {}]) {
+    for (const k of ["title", "author", "publisher", "publication_year", "page_count", "cover_url", "isbn", "popularity_score"]) {
+      if (src[k] && (!result[k] || (k === "page_count" && result.page_count === 300 && !bnfData.page_count))) {
+        result[k] = src[k];
+      }
+    }
+  }
+
+  // 5. Series cleanup from title
+  if (!result.series_name && result.title) {
+    const { seriesName, seriesVolume } = extractSeriesInfo(result.title);
+    if (seriesName) {
+      result.series_name = seriesName;
+      result.series_volume = seriesVolume;
+      result.title = cleanTitleFromSeries(result.title);
+    }
+  } else if (result.title) {
+    result.title = cleanTitleFromSeries(result.title) || result.title;
+  }
+
+  // 6. Infer Genres, Tags & Fantasy Subgenres
+  const textBlob = `${result.title} ${result.series_name} ${grData.summary || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
+  const { genres, tags } = inferGenresAndTags(textBlob, result.publisher);
+  if (!result.genres || result.genres.length === 0) result.genres = genres;
+  if (!result.tags || result.tags.length === 0) result.tags = tags;
+
+  result.fantasy_subgenres = inferFantasySubgenres(
+    `${textBlob} ${result.tags.join(" ")}`,
+    result.publisher,
+    result.title,
+    result.author
+  );
+
+  const listResults = (gbRes.results && gbRes.results.length > 0)
+    ? [result, ...gbRes.results.slice(1)]
+    : [result];
+
+  return { best: result, results: listResults };
 }
 
 module.exports = async function handler(req, res) {
