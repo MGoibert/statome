@@ -7,7 +7,7 @@ import streamlit as st
 
 # Configuration de la page Streamlit (optimisée pour mobile)
 st.set_page_config(
-    page_title="Statome",
+    page_title="StaTome",
     page_icon="assets/logo.png",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -125,7 +125,7 @@ def main():
     header_html = (
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">'
         '<div style="font-size: 1.35rem; font-weight: 800; color: #F8FAFC; letter-spacing: -0.5px;">'
-        '📚 Statome<span style="color: #6366F1;">.</span>'
+        '📚 StaTome<span style="color: #6366F1;">.</span>'
         '</div>'
         '<div style="font-size: 0.8rem; background: rgba(99, 102, 241, 0.2); color: #818CF8; padding: 3px 8px; border-radius: 20px; font-weight: 600;">'
         'Mobile PWA'

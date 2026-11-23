@@ -1,11 +1,11 @@
-# 🚀 Guide Complet de Lancement : Écosystème TomeFab (`tomefab.io` — Overtome & Statome)
+# 🚀 Guide Complet de Lancement : Écosystème TomeFab (`tomefab.io` — Overtome & StaTome)
 
-Ce document récapitule l'intégralité de la feuille de route **administrative, juridique, protection de la vie privée (anonymat) et technique** pour faire évoluer **Statome** et **Overtome** sous la marque ombrelle **TomeFab** (*La fabrique des tomes* / clin d'œil à *Fable* & *FabLab*), avec un budget de **0 € / mois de frais fixes** hors domiciliation.
+Ce document récapitule l'intégralité de la feuille de route **administrative, juridique, protection de la vie privée (anonymat) et technique** pour faire évoluer **StaTome** et **Overtome** sous la marque ombrelle **TomeFab** (*La fabrique des tomes* / clin d'œil à *Fable* & *FabLab*), avec un budget de **0 € / mois de frais fixes** hors domiciliation.
 
 > [!NOTE]
-> **Pourquoi la symétrie `TomeFab` (Entreprise) vs `Overtome` / `Statome` (Applications) est idéale :**
+> **Pourquoi la symétrie `TomeFab` (Entreprise) vs `Overtome` / `StaTome` (Applications) est idéale :**
 > * **L'entreprise commence par `Tome-`** : **TomeFab** (*la fabrique*) → On identifie immédiatement le studio créateur.
-> * **Les applications finissent par `-tome`** : **Overtome**, **Statome** → On identifie immédiatement les produits de la gamme.
+> * **Les applications finissent par `-tome`** : **Overtome**, **StaTome** → On identifie immédiatement les produits de la gamme.
 > * Les 4 domaines **`tomefab.io`**, **`tomefab.com`**, **`tomefab.fr`** et **`tomefab.app`** sont tous **100 % libres**.
 
 ---
@@ -58,7 +58,7 @@ flowchart TD
 Avant de lancer la moindre démarche administrative, sécurisez l'identité de **TomeFab** :
 
 1. **Vérification de disponibilité du nom (Gratuit, 5 min)** :
-   * Aller sur **[data.inpi.fr](https://data.inpi.fr)** et rechercher `TomeFab`, `Overtome` et `Statome` pour vérifier qu'aucune marque identique n'est déposée en France dans les classes 9, 38 ou 42 (logiciels / applications).
+   * Aller sur **[data.inpi.fr](https://data.inpi.fr)** et rechercher `TomeFab`, `Overtome` et `StaTome` pour vérifier qu'aucune marque identique n'est déposée en France dans les classes 9, 38 ou 42 (logiciels / applications).
 2. **Création d'une boîte mail privée de réception (Gratuit, 5 min)** :
    * Créer une adresse Gmail dédiée uniquement à votre studio (ex. `tomefab.studio@gmail.com`).
    * *Règle de vie privée* : Ne jamais utiliser votre adresse email personnelle (contenant votre nom de famille) pour inscrire vos outils techniques ou votre domaine.
@@ -86,12 +86,12 @@ Dès que vous êtes prête à préparer la version payante, vous pouvez mener la
 4. *Résultat* : Votre adresse personnelle n'apparaîtra sur aucun document officiel.
 
 #### Étape A2 — Créer l'unique Micro-Entreprise sur l'INPI (0 €)
-Une seule micro-entreprise couvrira **Overtome**, **Statome** et toutes vos futures applications :
+Une seule micro-entreprise couvrira **Overtome**, **StaTome** et toutes vos futures applications :
 1. Aller sur **[procedures.inpi.fr](https://procedures.inpi.fr)** (Guichet Unique officiel — gratuit, ne jamais passer par des sites intermédiaires payants).
 2. Renseigner les paramètres suivants :
    * **Forme juridique** : Entrepreneur individuel (Option Micro-entrepreneur / régime micro-social).
    * **Adresse de l'entreprise** : Mettre l'adresse de la société de domiciliation (Étape A1).
-   * **Nom commercial / Enseigne** : **`TomeFab`** (vous pouvez aussi mentionner `TomeFab / Overtome / Statome`).
+   * **Nom commercial / Enseigne** : **`TomeFab`** (vous pouvez aussi mentionner `TomeFab / Overtome / StaTome`).
    * **Activité** : *Prestation de services (BIC) — Édition de logiciels applicatifs / Services numériques et portails web*.
    * **Versement libératoire de l'impôt** : Cocher *Oui* si votre revenu fiscal de référence le permet (très pratique : prélève un tout petit % fixe en même temps que l'URSSAF).
 3. 🚨 **LA CASE CRUCIALE POUR VOTRE ANONYMAT (Diffusion INSEE)** :
@@ -118,7 +118,7 @@ Sur le tableau de bord **Cloudflare** de votre domaine `tomefab.io` (onglet **Em
 1. Renseigner votre boîte unique `tomefab.studio@gmail.com` comme destination.
 2. Créer les 4 alias gratuits suivants :
    * `contact@tomefab.io` *(pour l'administratif et les mentions légales)*
-   * `statome@tomefab.io` *(support utilisateurs Statome)*
+   * `statome@tomefab.io` *(support utilisateurs StaTome)*
    * `overtome@tomefab.io` *(support utilisateurs Overtome)*
    * `noreply@tomefab.io` *(envoi automatique des emails « Mot de passe oublié » via Brevo ou Resend gratuit)*
 
@@ -131,7 +131,7 @@ Sur le tableau de bord **Cloudflare** de votre domaine `tomefab.io` (onglet **Em
 3. Sélectionner votre dépôt privé **`statome`** (et faire de même pour **`overtome`**).
 4. Ajouter la variable d'environnement `DATABASE_URL` (votre lien Neon).
 5. Associer le sous-domaine personnalisé :
-   * **`statome.tomefab.io`** pour Statome.
+   * **`statome.tomefab.io`** pour StaTome.
    * **`overtome.tomefab.io`** pour Overtome.
 
 #### Étape B3 — Activer la sauvegarde quotidienne gratuite de la base Neon (0 € / mois)
@@ -139,7 +139,7 @@ Sur le tableau de bord **Cloudflare** de votre domaine `tomefab.io` (onglet **Em
 
 #### Étape B4 — Créer la mini-page vitrine `tomefab.io` & la page légale commune `tomefab.io/legal`
 Créer une page unique ultra-légère sur `tomefab.io` contenant :
-1. **L'accueil TomeFab** : présentation et liens vers **Overtome** et **Statome**.
+1. **L'accueil TomeFab** : présentation et liens vers **Overtome** et **StaTome**.
 2. **La page `/legal` commune à toutes vos applications** (un seul endroit à maintenir) regroupant :
    * **Mentions Légales** :
      * *Éditeur* : **TomeFab (EI)** — SIRET n° `[Votre SIRET non-diffusible]`
@@ -161,7 +161,7 @@ Une fois votre SIRET reçu et votre infrastructure prête :
 Pourquoi **Lemon Squeezy** plutôt que Stripe en direct ?
 1. **Protection de votre nom civil** : C'est *Lemon Squeezy LLC* qui apparaît comme vendeur officiel sur la facture PDF du client et sur son relevé bancaire (`LEMONSQUEEZY* TOMEFAB` ou `LEMONSQUEEZY* STATOME`). Votre nom civil n'est jamais envoyé au client.
 2. **Zéro gestion de TVA internationale** : Lemon Squeezy calcule, collecte et reverse la TVA pour vous dans tous les pays du monde (France, Belgique, Suisse, Canada, etc.).
-3. **Un seul compte pour toutes vos applis** : Vous créez un produit *« Statome Premium »* et un produit *« Overtome Premium »* dans le même tableau de bord Lemon Squeezy.
+3. **Un seul compte pour toutes vos applis** : Vous créez un produit *« StaTome Premium »* et un produit *« Overtome Premium »* dans le même tableau de bord Lemon Squeezy.
 
 ### 2. Choisir la bonne formule tarifaire pour démarrer
 Pour éviter que les frais fixes de carte bancaire ne grignotent vos revenus sur un petit nombre d'utilisateurs :

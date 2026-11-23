@@ -1,6 +1,6 @@
 {
-  "name": "StatOme — Suivi de Lecture",
-  "short_name": "StatOme",
+  "name": "StaTome — Suivi de Lecture",
+  "short_name": "StaTome",
   "description": "Tracker de lecture personnel rapide, mode Zen Focus & Détente",
   "start_url": "/",
   "display": "standalone",

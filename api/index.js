@@ -1,5 +1,5 @@
 /**
- * StatOme — Ultra-Fast Serverless API for Vercel (Zero-Dependency Neon HTTP SQL)
+ * StaTome — Ultra-Fast Serverless API for Vercel (Zero-Dependency Neon HTTP SQL)
  * Includes the complete multi-source book enrichment cascade:
  * 1. BnF SRU UNIMARC (recordSchema=unimarcXchange + Notice d'Autorité 102$a + Couverture HD)
  * 2. Goodreads AutoComplete JSON (Note communauté /5, Saga & Tome, Résumé, Couverture HD Amazon)

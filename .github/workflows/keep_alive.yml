@@ -1,4 +1,4 @@
-name: Keep StatOme Awake
+name: Keep StaTome Awake
 
 on:
   schedule:
@@ -15,7 +15,7 @@ jobs:
           APP_URL: ${{ secrets.APP_URL || vars.APP_URL }}
         run: |
           if [ -n "$APP_URL" ]; then
-            curl -sL -A "Mozilla/5.0 StatOmeKeepAlive" "$APP_URL" > /dev/null || true
+            curl -sL -A "Mozilla/5.0 StaTomeKeepAlive" "$APP_URL" > /dev/null || true
             echo "Pinged $APP_URL"
           else
             echo "Tip: define APP_URL in repository variables to ping a custom Streamlit URL"

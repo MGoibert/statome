@@ -1,5 +1,5 @@
 /**
- * StatOme PWA — Local-First Engine (0.01s startup + Background Neon Sync)
+ * StaTome PWA — Local-First Engine (0.01s startup + Background Neon Sync)
  * Full Feature Edition:
  * 1. Detailed 6-criteria ratings (/5) & 3-tab Book Modal (Fiche & Saga, Évaluation, Notes & Sessions)
  * 2. Default Live Video Barcode Scanner (Html5Qrcode + BarcodeDetector) with instant metadata enrichment
@@ -2679,7 +2679,7 @@ function renderAuthView(statusObj = null) {
     <div class="card" style="max-width:440px;margin:24px auto;padding:22px;">
       <div style="text-align:center;margin-bottom:14px;">
         <div style="font-size:2.5rem;">📖</div>
-        <h2 style="margin:6px 0 4px;">StatOme <span style="font-size:0.8rem;color:var(--primary-light);font-weight:600;">by TomeFab</span></h2>
+        <h2 style="margin:6px 0 4px;">StaTome <span style="font-size:0.8rem;color:var(--primary-light);font-weight:600;">by TomeFab</span></h2>
         ${canSignup ? `
           <div style="font-size:0.78rem;color:#34D399;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.35);padding:5px 10px;border-radius:8px;margin-top:6px;">
             ✨ Bêta Privée ouverte sur invitation (${spotsLeft} place(s) disponible(s) sur ${maxUsers})
@@ -2816,7 +2816,7 @@ window.openAccountModal = async function () {
 
   openModal(`
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h3 style="margin:0;">👤 Mon Compte StatOme</h3>
+      <h3 style="margin:0;">👤 Mon Compte StaTome</h3>
       <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
     </div>
     <div class="card" style="margin-top:12px;">
