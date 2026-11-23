@@ -6,7 +6,7 @@ const isPreviewBranch = Boolean(branch && branch !== "main");
 // En Preview (toute branche autre que main), on utilise PREVIEW_DATABASE_URL
 // pour ne jamais toucher à la base de données de Production.
 const dbUrl = isPreviewBranch
-  ? (process.env.PREVIEW_DATABASE_URL || "")
+  ? (process.env.PREVIEW_DATABASE_URL || process.env.DATABASE_URL || "")
   : (process.env.DATABASE_URL || "");
 
 fs.writeFileSync(
