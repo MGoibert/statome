@@ -914,7 +914,16 @@ function renderAddView() {
             📹 Visée en direct : placez le code-barres du livre face à l'objectif...
           </div>
         `}
-        <div id="barcode-scanner-box" style="display:${state.cameraActive ? "block" : "none"};"></div>
+        <div class="scanner-viewport" style="display:${state.cameraActive ? "block" : "none"};">
+          <div id="barcode-scanner-box"></div>
+          ${state.cameraActive ? `
+            <div class="scanner-overlay" aria-hidden="true">
+              <div class="scanner-reticle">
+                <div class="scanner-laser"></div>
+              </div>
+            </div>
+          ` : ""}
+        </div>
         ${state.lastScannedCode ? `
           <div style="margin-top:10px;padding:8px 12px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);border-radius:8px;font-size:0.84rem;color:#6ee7b7;">
             ✅ Dernier ISBN scanné : <b>${escapeHtml(state.lastScannedCode)}</b> — <i>${escapeHtml(d.title)}</i>
@@ -1219,26 +1228,62 @@ window.startBarcodeCamera = async function () {
       renderAddView();
       return;
     }
-    html5QrScanner = new Html5Qrcode("barcode-scanner-box");
-    await html5QrScanner.start(
-      { facingMode: "environment" },
-      {
-        fps: 15,
-        qrbox: { width: 270, height: 130 },
-        aspectRatio: 1.5
-      },
-      async (decodedText) => {
-        if (isProcessingScan) return;
-        const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
-        const isValidIsbn =
-          (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
-          clean.length === 10;
-        if (isValidIsbn) {
-          await window.handleDetectedIsbn(clean);
-        }
-      },
-      () => {}
-    );
+    const scannerOptions = {
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    };
+    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
+      scannerOptions.formatsToSupport = [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8
+      ];
+    }
+
+    html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
+
+    const onScanSuccess = async (decodedText) => {
+      if (isProcessingScan) return;
+      const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+      const isValidIsbn =
+        (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
+        clean.length === 10;
+      if (isValidIsbn) {
+        await window.handleDetectedIsbn(clean);
+      }
+    };
+
+    const baseConfig = {
+      fps: 15,
+      qrbox: (viewfinderWidth, viewfinderHeight) => ({
+        width: Math.max(220, Math.round(viewfinderWidth * 0.82)),
+        height: Math.max(100, Math.round(viewfinderHeight * 0.38))
+      }),
+      aspectRatio: 1.5
+    };
+
+    try {
+      await html5QrScanner.start(
+        { facingMode: "environment" },
+        {
+          ...baseConfig,
+          videoConstraints: {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            focusMode: { ideal: "continuous" }
+          }
+        },
+        onScanSuccess,
+        () => {}
+      );
+    } catch (hdErr) {
+      // Fallback si le navigateur/téléphone refuse les contraintes HD/autofocus
+      await html5QrScanner.start(
+        { facingMode: "environment" },
+        baseConfig,
+        onScanSuccess,
+        () => {}
+      );
+    }
   } catch (err) {
     state.cameraActive = false;
     renderAddView();

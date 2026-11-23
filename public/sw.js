@@ -1,5 +1,5 @@
-const CACHE_NAME = "statome-pwa-v9";
-const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=9", "/app.js?v=9", "/html5-qrcode.min.js", "/manifest.json"];
+const CACHE_NAME = "statome-pwa-v10";
+const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=10", "/app.js?v=10", "/html5-qrcode.min.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

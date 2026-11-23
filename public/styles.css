@@ -520,7 +520,8 @@ label {
 }
 
 /* Camera Scanner Box */
-#barcode-scanner-box {
+.scanner-viewport {
+  position: relative;
   width: 100%;
   max-width: 460px;
   margin: 10px auto;
@@ -528,6 +529,51 @@ label {
   overflow: hidden;
   border: 2px solid var(--primary);
   background: #000;
+}
+
+#barcode-scanner-box {
+  width: 100%;
+}
+
+.scanner-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+.scanner-reticle {
+  position: relative;
+  width: 82%;
+  height: 38%;
+  min-height: 100px;
+  border: 2px solid rgba(129, 140, 248, 0.85);
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+
+.scanner-laser {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #ef4444 20%, #f87171 50%, #ef4444 80%, transparent);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.9), 0 0 4px #fca5a5;
+  border-radius: 99px;
+  animation: scannerLaser 1.8s ease-in-out infinite;
+}
+
+@keyframes scannerLaser {
+  0%, 100% {
+    top: 8%;
+  }
+  50% {
+    top: calc(92% - 3px);
+  }
 }
 
 /* Bottom Navigation Bar */
