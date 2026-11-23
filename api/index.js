@@ -219,46 +219,50 @@ function cleanTitleFromSeries(title) {
   return cleaned.replace(/^[-:;.,\s]+|[-:;.,\s]+$/g, "");
 }
 
+function hasKeyword(text, kw) {
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "u").test(text);
+}
+
 function inferGenresAndTags(text, publisher = "") {
   const combined = `${text} ${publisher}`.toLowerCase();
   const genres = [];
   const tags = [];
 
   const genreRules = [
-    [["magie", "sorcière", "sorcellerie", "witch", "dragon", "royaume", "elfe", "sortilège", "féerique", "fae", "bragelonne", "calix", "de saxus", "mnémos", "rivka", "cozy", "cosy", "fantasy", "tolkien", "sanderson"], "Fantasy"],
-    [["planète", "galaxie", "vaisseau", "futur", "dystopie", "science-fiction", "science fiction", "sci-fi", "spatial", "cyberpunk", "space opera", "robot", "androïde", "post-apo"], "Science-Fiction"],
-    [["enquête", "meurtre", "crime", "assassin", "mystère", "police", "policier", "thriller", "complot", "détective", "commissaire", "inspecteur", "polar", "suspense"], "Thriller / Polar"],
-    [["amour", "romance", "amant", "passion", "cœur", "love", "mariage", "fiancé", "baiser", "séduction"], "Romance"],
-    [["1633", "xviie", "xixe", "siècle", "cardinal", "mousquetaire", "médiéval", "historique", "historical", "antiquité", "empire", "révolution", "guerre mondiale"], "Historique"],
-    [["vampire", "démon", "fantôme", "ténèbres", "horreur", "horror", "épouvante", "malédiction", "ombre", "cauchemar", "paranormal", "occulte"], "Horreur & Fantastique"],
-    [["manga", "shonen", "seinen", "shojo", "bande dessinée", "roman graphique", "comics", "webtoon", "casterman", "dargaud", "glénat", "kurokawa", "ki-oon", "pika", "kana"], "Manga, BD & Graphique"],
-    [["essai", "biographie", "philosophie", "psychologie", "développement personnel", "société", "économie", "histoire de", "mémoires", "non-fiction", "document"], "Non-Fiction & Essais"],
-    [["contemporain", "famille", "vie", "roman", "littérature", "classique", "gallimard", "grasset", "albin michel", "actes sud", "seuil", "flammarion"], "Littérature & Contemporain"]
+    [["magie", "magic", "sorcière", "sorcières", "sorcellerie", "witch", "dragon", "dragons", "royaume", "elfe", "sortilège", "féerique", "fae", "faë", "bragelonne", "calix", "de saxus", "mnémos", "rivka", "fantasy", "tolkien", "sanderson", "romantasy", "grimdark"], "Fantasy"],
+    [["planète", "galaxie", "vaisseau", "dystopie", "dystopian", "science-fiction", "science fiction", "sci-fi", "spatial", "cyberpunk", "space opera", "robot", "androïde", "post-apo", "post-apocalyptique"], "Science-Fiction"],
+    [["enquête", "meurtre", "crime", "assassin", "mystère", "mystery", "police", "policier", "roman policier", "thriller", "complot", "détective", "detective", "commissaire", "inspecteur", "polar", "suspense"], "Thriller / Polar"],
+    [["amour", "romance", "amant", "passion", "romantasy", "fiancé", "séduction", "feel-good", "rom-com"], "Romance"],
+    [["xviie", "xixe", "siècle", "mousquetaire", "médiéval", "historique", "historical", "antiquité", "révolution", "guerre mondiale", "history"], "Historique"],
+    [["vampire", "vampires", "démon", "fantôme", "ténèbres", "horreur", "horror", "épouvante", "malédiction", "cauchemar", "paranormal", "occulte", "gothique"], "Horreur & Fantastique"],
+    [["manga", "mangas", "shonen", "seinen", "shojo", "bande dessinée", "bandes dessinées", "bd", "roman graphique", "graphic novels", "comics", "webtoon", "casterman", "dargaud", "glénat", "kurokawa", "ki-oon", "pika", "kana"], "Manga, BD & Graphique"],
+    [["essai", "essais", "biographie", "biography", "autobiographie", "philosophie", "philosophy", "psychologie", "psychology", "développement personnel", "self-help", "économie", "economics", "mémoires", "non-fiction", "nonfiction", "documentaire"], "Non-Fiction & Essais"],
+    [["contemporain", "contemporary", "roman contemporain", "littérature contemporaine", "literary fiction", "classique", "classiques", "littérature générale"], "Littérature & Contemporain"]
   ];
   for (const [kws, label] of genreRules) {
-    if (kws.some((kw) => combined.includes(kw)) && !genres.includes(label)) genres.push(label);
+    if (kws.some((kw) => hasKeyword(combined, kw)) && !genres.includes(label)) genres.push(label);
   }
 
   const tagRules = [
-    [["sorcière", "sorcellerie", "witch", "coven"], "Sorcières"],
-    [["magie", "sortilège", "pouvoir", "magic", "alchimie"], "Magie"],
-    [["dragon"], "Dragons"],
+    [["sorcière", "sorcières", "sorcellerie", "witch", "coven"], "Sorcières"],
+    [["magie", "sortilège", "magic", "alchimie"], "Magie"],
+    [["dragon", "dragons"], "Dragons"],
     [["fae", "faë", "fairies"], "Faë"],
-    [["vampire"], "Vampires"],
-    [["royaume", "cour", "trône", "politique", "complot", "intrigue", "king", "queen"], "Politique & Complots"],
-    [["académie", "école", "université", "academia", "campus"], "Académie / Campus"],
+    [["vampire", "vampires"], "Vampires"],
+    [["royaume", "trône", "politique", "complot", "intrigue", "king", "queen"], "Politique & Complots"],
+    [["académie", "université", "academia", "campus"], "Académie / Campus"],
     [["secret", "mystère", "énigme", "mystery", "enquête"], "Enquête & Mystères"],
-    [["rival", "ennemi", "enemies"], "Enemies to Lovers"],
-    [["amitié", "allié", "équipe", "famille", "family"], "Found Family"],
+    [["enemies to lovers", "ennemis", "rival"], "Enemies to Lovers"],
+    [["found family", "allié", "équipier"], "Found Family"],
     [["psychologique", "manipulation", "mensonge"], "Suspense Psychologique"],
     [["espace", "planète", "galaxie"], "Exploration Spatiale"],
-    [["voyage", "quête", "aventure"], "Quête & Aventure"]
+    [["quête", "aventure"], "Quête & Aventure"]
   ];
   for (const [kws, label] of tagRules) {
-    if (kws.some((kw) => combined.includes(kw)) && !tags.includes(label)) tags.push(label);
+    if (kws.some((kw) => hasKeyword(combined, kw)) && !tags.includes(label)) tags.push(label);
   }
 
-  if (genres.length === 0) genres.push("Littérature & Contemporain");
   return { genres: genres.slice(0, 4), tags: tags.slice(0, 6) };
 }
 
@@ -429,6 +433,23 @@ async function fetchFromBnf(isbnOrQuery) {
       const pm = sfa.match(/(\d+)\s*p\b/i) || sfa.match(/(\d{2,4})/);
       if (pm) data.page_count = Number(pm[1]);
     }
+
+    // 330: Summary ($a) & 606/608/610: Subject / Genre headings ($a)
+    const bnfSummaries = [];
+    for (const b of getFieldBlocks("330")) {
+      const sfa = getSub(b, "a");
+      if (sfa) bnfSummaries.push(sfa);
+    }
+    if (bnfSummaries.length) data.summary = bnfSummaries.join(" ");
+
+    const bnfSubjects = [];
+    for (const tag of ["606", "608", "610"]) {
+      for (const b of getFieldBlocks(tag)) {
+        const sfa = getSub(b, "a");
+        if (sfa) bnfSubjects.push(sfa);
+      }
+    }
+    if (bnfSubjects.length) data.bnf_subjects = bnfSubjects.join(" ");
 
     // 461 / 410 / 225: Series ($t or $a) & Volume ($v)
     for (const tag of ["461", "410", "225"]) {
@@ -611,7 +632,8 @@ async function fetchFromGoogleBooks(isbnOrQuery) {
         series_volume: seriesVolume,
         cover_url: cover,
         popularity_score: vol.averageRating ? Number(vol.averageRating) : null,
-        description: vol.description || ""
+        description: vol.description || "",
+        categories: Array.isArray(vol.categories) ? vol.categories.join(" ") : ""
       };
       results.push(itemData);
     }
@@ -709,8 +731,8 @@ async function enrichBookMetadata(isbnOrQuery) {
     result.title = cleanTitleFromSeries(result.title) || result.title;
   }
 
-  // 6. Infer Genres, Tags & Fantasy Subgenres
-  const textBlob = `${result.title} ${result.series_name} ${grData.summary || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
+  // 6. Infer Genres, Tags & Subgenres (BnF + Goodreads + Google Books)
+  const textBlob = `${result.title} ${result.series_name} ${bnfData.bnf_subjects || ""} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.categories) || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
   const { genres, tags } = inferGenresAndTags(textBlob, result.publisher);
   if (!result.genres || result.genres.length === 0) result.genres = genres;
   if (!result.tags || result.tags.length === 0) result.tags = tags;
