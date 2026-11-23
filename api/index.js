@@ -225,12 +225,15 @@ function inferGenresAndTags(text, publisher = "") {
   const tags = [];
 
   const genreRules = [
-    [["magie", "sorcière", "sorcellerie", "witch", "dragon", "royaume", "elfe", "sortilège", "féerique", "fae", "bragelonne", "calix", "de saxus", "mnémos", "rivka", "cozy", "cosy", "fantasy"], "Fantasy"],
-    [["amour", "romance", "amant", "passion", "cœur", "love"], "Romance"],
-    [["1633", "xviie", "xixe", "siècle", "cardinal", "mousquetaire", "médiéval", "historique", "historical"], "Historique"],
-    [["enquête", "meurtre", "crime", "assassin", "mystère", "police", "thriller", "complot"], "Thriller / Polar"],
-    [["planète", "galaxie", "vaisseau", "futur", "dystopie", "science-fiction", "sci-fi", "spatial"], "Science-Fiction"],
-    [["vampire", "démon", "fantôme", "ténèbres", "horreur", "malédiction", "ombre", "dark"], "Fantastique / Sombre"]
+    [["magie", "sorcière", "sorcellerie", "witch", "dragon", "royaume", "elfe", "sortilège", "féerique", "fae", "bragelonne", "calix", "de saxus", "mnémos", "rivka", "cozy", "cosy", "fantasy", "tolkien", "sanderson"], "Fantasy"],
+    [["planète", "galaxie", "vaisseau", "futur", "dystopie", "science-fiction", "science fiction", "sci-fi", "spatial", "cyberpunk", "space opera", "robot", "androïde", "post-apo"], "Science-Fiction"],
+    [["enquête", "meurtre", "crime", "assassin", "mystère", "police", "policier", "thriller", "complot", "détective", "commissaire", "inspecteur", "polar", "suspense"], "Thriller / Polar"],
+    [["amour", "romance", "amant", "passion", "cœur", "love", "mariage", "fiancé", "baiser", "séduction"], "Romance"],
+    [["1633", "xviie", "xixe", "siècle", "cardinal", "mousquetaire", "médiéval", "historique", "historical", "antiquité", "empire", "révolution", "guerre mondiale"], "Historique"],
+    [["vampire", "démon", "fantôme", "ténèbres", "horreur", "horror", "épouvante", "malédiction", "ombre", "cauchemar", "paranormal", "occulte"], "Horreur & Fantastique"],
+    [["manga", "shonen", "seinen", "shojo", "bande dessinée", "roman graphique", "comics", "webtoon", "casterman", "dargaud", "glénat", "kurokawa", "ki-oon", "pika", "kana"], "Manga, BD & Graphique"],
+    [["essai", "biographie", "philosophie", "psychologie", "développement personnel", "société", "économie", "histoire de", "mémoires", "non-fiction", "document"], "Non-Fiction & Essais"],
+    [["contemporain", "famille", "vie", "roman", "littérature", "classique", "gallimard", "grasset", "albin michel", "actes sud", "seuil", "flammarion"], "Littérature & Contemporain"]
   ];
   for (const [kws, label] of genreRules) {
     if (kws.some((kw) => combined.includes(kw)) && !genres.includes(label)) genres.push(label);
@@ -243,38 +246,69 @@ function inferGenresAndTags(text, publisher = "") {
     [["fae", "faë", "fairies"], "Faë"],
     [["vampire"], "Vampires"],
     [["royaume", "cour", "trône", "politique", "complot", "intrigue", "king", "queen"], "Politique & Complots"],
-    [["académie", "école", "université", "academia"], "Académie"],
-    [["secret", "mystère", "énigme", "mystery"], "Secrets & Mystères"],
+    [["académie", "école", "université", "academia", "campus"], "Académie / Campus"],
+    [["secret", "mystère", "énigme", "mystery", "enquête"], "Enquête & Mystères"],
     [["rival", "ennemi", "enemies"], "Enemies to Lovers"],
-    [["amitié", "allié", "équipe", "famille", "family"], "Found Family"]
+    [["amitié", "allié", "équipe", "famille", "family"], "Found Family"],
+    [["psychologique", "manipulation", "mensonge"], "Suspense Psychologique"],
+    [["espace", "planète", "galaxie"], "Exploration Spatiale"],
+    [["voyage", "quête", "aventure"], "Quête & Aventure"]
   ];
   for (const [kws, label] of tagRules) {
     if (kws.some((kw) => combined.includes(kw)) && !tags.includes(label)) tags.push(label);
   }
 
-  if (genres.length === 0) genres.push("Fantasy");
+  if (genres.length === 0) genres.push("Littérature & Contemporain");
   return { genres: genres.slice(0, 4), tags: tags.slice(0, 6) };
 }
 
 function inferFantasySubgenres(text = "", publisher = "", title = "", author = "") {
   const combined = `${title} ${author} ${publisher} ${text}`.toLowerCase();
   const rules = [
+    // Fantasy
     [["litrpg", "progression fantasy", "cultivation", "dungeon", "donjon", "will wight"], "Progression Fantasy / LitRPG"],
-    [["romantasy", "romantic fantasy", "fourth wing", "yarros", "acotar", "sarah j. maas", "fae", "enemies to lovers", "romance"], "Romantasy / Romantic Fantasy"],
+    [["romantasy", "romantic fantasy", "fourth wing", "yarros", "acotar", "sarah j. maas", "fae", "enemies to lovers"], "Romantasy / Romantic Fantasy"],
     [["flintlock", "powder mage", "mousquet", "mousquetaire", "lames du cardinal", "pierre pevel", "1633"], "Flintlock Fantasy / Militaire"],
     [["grimdark", "poppy war", "kuang", "abercrombie", "john gwynne", "malice", "guerre sanglante"], "Grimdark"],
-    [["cozy fantasy", "cosy fantasy", "cozy", "cosy", "slice of life", "tranche de vie", "travis baldree", "rewitched", "lucy jane wood", "salon de thé"], "Cozy Fantasy / Tranche de vie"],
+    [["cozy fantasy", "cosy fantasy", "slice of life", "tranche de vie", "travis baldree", "rewitched", "lucy jane wood", "salon de thé"], "Cozy Fantasy / Tranche de vie"],
     [["retelling", "réécriture", "conte", "fairy tale"], "Contes & Réécritures (Retellings)"],
-    [["uchronie", "alternate history", "naomi novik", "susanna clarke"], "Uchronie / Histoire Alternative"],
+    [["uchronie", "alternate history", "naomi novik", "susanna clarke", "voyage temporel", "time travel"], "Uchronie / Histoire Alternative"],
     [["fantasy historique", "historical fantasy", "guy gavriel kay", "jacquelyn benson"], "Fantasy Historique"],
     [["sword and sorcery", "sword & sorcery", "conan", "épée"], "Sword & Sorcery"],
     [["science fantasy", "tamsyn muir", "jemisin", "absolu", "margot dessenne"], "Science Fantasy"],
     [["steampunk", "vapeur", "victorien"], "Steampunk"],
     [["urban fantasy", "fantastique urbain", "dresden", "patricia briggs"], "Urban Fantasy"],
-    [["dark fantasy", "vampire", "démon", "nécromancie", "anouck faure", "cité diaphane"], "Dark Fantasy"],
+    [["dark fantasy", "nécromancie", "anouck faure", "cité diaphane"], "Dark Fantasy"],
     [["epic fantasy", "high fantasy", "tolkien", "sanderson", "gwynne", "royaume", "épopée"], "High / Epic Fantasy"],
     [["mythic", "mythologie", "mythologique", "madeline miller", "dieux"], "Fantasy Mythologique"],
-    [["young adult", "ya fantasy", "bardugo", "livre de poche jeunesse"], "Young Adult Fantasy"]
+    [["young adult", "ya fantasy", "bardugo", "livre de poche jeunesse"], "Young Adult Fantasy"],
+    // Science-Fiction
+    [["space opera", "vaisseau", "galaxie", "empire galactique", "asimov", "dune"], "Space Opera"],
+    [["dystopie", "dystopian", "post-apocalyptique", "post-apo", "effondrement", "survie"], "Dystopie / Post-Apocalyptique"],
+    [["cyberpunk", "solarpunk", "intelligence artificielle", "hacker", "virtuel"], "Cyberpunk / Solarpunk"],
+    [["hard sf", "hard science", "astrophysique", "quantique"], "Hard SF"],
+    // Thriller & Polar
+    [["thriller psychologique", "manipulation", "huis clos", "disparition", "domestique"], "Thriller Psychologique"],
+    [["polar", "enquête policière", "commissaire", "inspecteur", "meurtre", "détective"], "Polar / Enquête policière"],
+    [["cosy mystery", "cozy mystery", "détective amateur", "agatha christie"], "Cosy Mystery"],
+    [["roman noir", "hardboiled", "mafia", "gang"], "Roman Noir / Hardboiled"],
+    [["espionnage", "espion", "cia", "kgb", "géopolitique"], "Espionnage / Géopolitique"],
+    // Romance
+    [["romance contemporaine", "coup de foudre", "amour moderne"], "Romance Contemporaine"],
+    [["rom-com", "comédie romantique", "humour", "feel-good", "feel good"], "Rom-Com / Feel-Good"],
+    [["dark romance", "interdit", "captive"], "Dark Romance"],
+    [["new adult", "campus", "université", "colocation"], "New Adult / Campus"],
+    [["romance historique", "régence", "duc", "bridgerton"], "Romance Historique"],
+    // Littérature, Historique, Horreur, Manga, Non-Fiction
+    [["classique", "xixe siècle", "chef-d'œuvre", "littérature classique"], "Classique"],
+    [["roman contemporain", "saga familiale", "portrait", "intime"], "Roman Contemporain"],
+    [["roman historique", "époque", "mémoire historique"], "Roman Historique"],
+    [["horreur", "épouvante", "stephen king", "terreur"], "Horreur / Épouvante"],
+    [["gothique", "manoir", "fantôme", "hanté"], "Gothique"],
+    [["manga", "shonen", "seinen", "shojo"], "Manga"],
+    [["bande dessinée", "roman graphique", "bd"], "Bande Dessinée / Roman Graphique"],
+    [["développement personnel", "bien-être", "habitudes"], "Développement Personnel"],
+    [["biographie", "autobiographie", "mémoires"], "Biographie / Mémoires"]
   ];
   const detected = [];
   for (const [kws, label] of rules) {
@@ -607,7 +641,7 @@ async function enrichBookMetadata(isbnOrQuery) {
     chapter_count: null,
     price: null,
     format: "Broché",
-    genres: ["Fantasy"],
+    genres: [],
     tags: [],
     fantasy_subgenres: [],
     popularity_score: null,
@@ -814,7 +848,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       }
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
-      const displayName = String(body.display_name || "Morgane").trim();
+      const displayName = String(body.display_name || "Propriétaire").trim();
       if (!email || password.length < 4) {
         return { status: 400, data: { ok: false, error: "Veuillez saisir un email et un mot de passe (4 caractères min)." } };
       }
@@ -927,7 +961,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
     const userId = Number(authUser.uid);
     const isAdmin = Boolean(authUser.admin) || userId === 1;
 
-    // 6. Actions d'administration Bêta (réservées à Morgane / Propriétaire)
+    // 6. Actions d'administration Bêta (réservées au Propriétaire)
     if (action === "admin_get_dashboard") {
       if (!isAdmin) return { status: 403, data: { ok: false, error: "Accès réservé au propriétaire." } };
       const [settings, usersRows] = await Promise.all([

@@ -25,34 +25,145 @@ const FRENCH_MONTHS = [
   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"
 ];
 
-const FANTASY_SUBGENRES = [
-  "High / Epic Fantasy",
-  "Dark Fantasy",
-  "Grimdark",
-  "Romantasy / Romantic Fantasy",
-  "Cozy Fantasy / Tranche de vie",
-  "Flintlock Fantasy / Militaire",
-  "Progression Fantasy / LitRPG",
-  "Urban Fantasy",
-  "Fantasy Historique",
-  "Uchronie / Histoire Alternative",
-  "Contes & Réécritures (Retellings)",
-  "Fantasy de Mœurs (Fantasy of Manners)",
-  "Sword & Sorcery",
-  "Science Fantasy",
-  "Fantasy Mythologique",
-  "Réalisme Magique",
-  "Fantasy Humoristique",
-  "Steampunk",
-  "New Weird",
-  "Weird West / Fantasy Western",
-  "Romance Paranormale",
-  "Young Adult Fantasy",
-  "Exploration & Aventure",
-  "Dystopie / Post-Apocalyptique",
-  "Fantasy Classique",
-  "Autre"
-];
+const GENRE_TAXONOMY = {
+  "Fantasy": [
+    "High / Epic Fantasy",
+    "Dark Fantasy",
+    "Grimdark",
+    "Romantasy / Romantic Fantasy",
+    "Cozy Fantasy / Tranche de vie",
+    "Flintlock Fantasy / Militaire",
+    "Progression Fantasy / LitRPG",
+    "Urban Fantasy",
+    "Fantasy Historique",
+    "Uchronie / Histoire Alternative",
+    "Contes & Réécritures (Retellings)",
+    "Fantasy de Mœurs (Fantasy of Manners)",
+    "Sword & Sorcery",
+    "Science Fantasy",
+    "Fantasy Mythologique",
+    "Réalisme Magique",
+    "Fantasy Humoristique",
+    "Steampunk",
+    "New Weird",
+    "Weird West / Fantasy Western",
+    "Romance Paranormale",
+    "Young Adult Fantasy",
+    "Exploration & Aventure",
+    "Dystopie / Post-Apocalyptique",
+    "Fantasy Classique"
+  ],
+  "Science-Fiction": [
+    "Space Opera",
+    "Dystopie / Post-Apocalyptique",
+    "Cyberpunk / Solarpunk",
+    "Hard SF",
+    "Anticipation / Near-Future",
+    "Uchronie / Voyage temporel",
+    "Planet Opera",
+    "First Contact / Aliens",
+    "Science Fantasy",
+    "SF Humoristique"
+  ],
+  "Thriller / Polar": [
+    "Thriller Psychologique",
+    "Polar / Enquête policière",
+    "Cosy Mystery",
+    "Roman Noir / Hardboiled",
+    "Thriller Historique",
+    "Espionnage / Géopolitique",
+    "Thriller Scientifique / Médical",
+    "True Crime"
+  ],
+  "Romance": [
+    "Romance Contemporaine",
+    "Rom-Com / Feel-Good",
+    "Dark Romance",
+    "New Adult / Campus",
+    "Romance Historique",
+    "Romantasy / Romantic Fantasy",
+    "Romance Paranormale",
+    "Slow Burn / Found Family"
+  ],
+  "Littérature & Contemporain": [
+    "Roman Contemporain",
+    "Classique",
+    "Feel-Good / Tranche de vie",
+    "Saga Familiale",
+    "Drame / Émotion",
+    "Littérature Étrangère",
+    "Récit initiatique",
+    "Poésie / Théâtre",
+    "Nouvelles"
+  ],
+  "Historique": [
+    "Roman Historique",
+    "Biographie Historique",
+    "Antiquité / Moyen Âge",
+    "XVIIe - XIXe siècle",
+    "XXe siècle / Guerres mondiales",
+    "Saga Historique",
+    "Fantasy Historique"
+  ],
+  "Horreur & Fantastique": [
+    "Horreur / Épouvante",
+    "Gothique",
+    "Fantastique",
+    "Paranormal / Occulte",
+    "Folk Horror",
+    "Cosmic Horror / Lovecraftien",
+    "Survival / Thriller Horrifique"
+  ],
+  "Manga, BD & Graphique": [
+    "Manga (Shōnen)",
+    "Manga (Seinen)",
+    "Manga (Shōjo / Josei)",
+    "Bande Dessinée Franco-Belge",
+    "Roman Graphique",
+    "Webtoon",
+    "Comics"
+  ],
+  "Non-Fiction & Essais": [
+    "Histoire & Civilisations",
+    "Développement Personnel",
+    "Sciences & Nature",
+    "Philosophie & Psychologie",
+    "Société & Politique",
+    "Biographie / Mémoires",
+    "Art, Culture & Pop-Culture",
+    "Économie & Business"
+  ]
+};
+
+const MAIN_GENRES = Object.keys(GENRE_TAXONOMY);
+const ALL_SUBGENRES = Array.from(new Set(Object.values(GENRE_TAXONOMY).flat()));
+const FANTASY_SUBGENRES = ALL_SUBGENRES;
+
+function getSubgenresForGenres(genresInput, currentSubgenres = []) {
+  const rawList = Array.isArray(genresInput)
+    ? genresInput
+    : String(genresInput || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const pool = new Set();
+  for (const g of rawList) {
+    const gLow = g.toLowerCase();
+    for (const [mainG, subs] of Object.entries(GENRE_TAXONOMY)) {
+      if (mainG.toLowerCase().includes(gLow) || gLow.includes(mainG.toLowerCase().split(" ")[0])) {
+        subs.forEach((s) => pool.add(s));
+      }
+    }
+  }
+  if (pool.size === 0) {
+    GENRE_TAXONOMY["Fantasy"].forEach((s) => pool.add(s));
+    GENRE_TAXONOMY["Littérature & Contemporain"].forEach((s) => pool.add(s));
+    GENRE_TAXONOMY["Thriller / Polar"].forEach((s) => pool.add(s));
+    GENRE_TAXONOMY["Romance"].forEach((s) => pool.add(s));
+    GENRE_TAXONOMY["Science-Fiction"].forEach((s) => pool.add(s));
+  }
+  (currentSubgenres || []).forEach((s) => {
+    if (s) pool.add(s);
+  });
+  return Array.from(pool);
+}
 
 let html5QrScanner = null;
 
@@ -708,10 +819,10 @@ function renderLibraryView() {
     </div>
     ${state.libAdvOpen ? `
       <div class="card" style="padding:12px;margin-bottom:10px;">
-        <label style="margin-top:0;">✨ Filtrer par Sous-genre Fantasy</label>
+        <label style="margin-top:0;">✨ Filtrer par Sous-genre</label>
         <select onchange="window.setLibSubgenre(this.value)">
           <option value="Tous" ${state.libSubgenre === "Tous" ? "selected" : ""}>Tous les sous-genres</option>
-          ${FANTASY_SUBGENRES.map((s) => `<option value="${escapeHtml(s)}" ${state.libSubgenre === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+          ${ALL_SUBGENRES.map((s) => `<option value="${escapeHtml(s)}" ${state.libSubgenre === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
         </select>
       </div>
     ` : ""}
@@ -902,6 +1013,15 @@ function renderAddView() {
         </div>
       </div>
 
+      <label>📚 Genres principaux (cliquez pour ajouter/retirer ou éditez ci-dessous)</label>
+      <div class="chips-wrap" style="margin-bottom:8px;">
+        ${MAIN_GENRES.map((mg) => {
+          const currentList = String(d.genres || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+          const sel = currentList.includes(mg.toLowerCase());
+          return `<span class="chip-check ${sel ? "selected" : ""}" onclick="window.toggleDraftMainGenre('${escapeHtml(mg)}')">${escapeHtml(mg)}</span>`;
+        }).join("")}
+      </div>
+
       <div class="grid-2">
         <div>
           <label>Genres (séparés par virgules)</label>
@@ -909,13 +1029,13 @@ function renderAddView() {
         </div>
         <div>
           <label>Tags & Tropes (séparés par virgules)</label>
-          <input id="add-tags" value="${escapeHtml(d.tags)}" oninput="window.syncAddDraft()" placeholder="Ex: Magie, Dragons, Slow Burn" />
+          <input id="add-tags" value="${escapeHtml(d.tags)}" oninput="window.syncAddDraft()" placeholder="Ex: Enquête, Magie, Slow Burn" />
         </div>
       </div>
 
-      <label>✨ Sous-genres (Fantasy & Imaginaire — cliquez pour sélectionner)</label>
+      <label>✨ Sous-genres (adaptés aux genres choisis — cliquez pour sélectionner)</label>
       <div class="chips-wrap">
-        ${FANTASY_SUBGENRES.map((sg) => {
+        ${getSubgenresForGenres(d.genres, d.fantasy_subgenres).map((sg) => {
           const sel = (d.fantasy_subgenres || []).includes(sg);
           return `<span class="chip-check ${sel ? "selected" : ""}" onclick="window.toggleDraftSubgenre('${escapeHtml(sg)}')">${escapeHtml(sg)}</span>`;
         }).join("")}
@@ -987,6 +1107,19 @@ window.syncAddDraft = function () {
   state.addDraft.status = g("add-status");
   state.addDraft.pal_month_name = g("add-pal-m");
   state.addDraft.pal_year_val = g("add-pal-y");
+};
+
+window.toggleDraftMainGenre = function (mg) {
+  window.syncAddDraft();
+  const list = String(state.addDraft.genres || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const idx = list.findIndex((x) => x.toLowerCase() === mg.toLowerCase());
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(mg);
+  state.addDraft.genres = list.join(", ");
+  renderAddView();
 };
 
 window.toggleDraftSubgenre = function (sg) {
@@ -1781,8 +1914,8 @@ function renderStatsCatalogTab(books) {
     </div>
 
     <div class="chart-card">
-      <div class="chart-title">✨ Répartition des Sous-genres de Fantasy</div>
-      <div class="chart-sub">Sous-genres de l'Imaginaire représentés dans ce périmètre</div>
+      <div class="chart-title">✨ Répartition des Sous-genres</div>
+      <div class="chart-sub">Sous-genres représentés dans ce périmètre</div>
       <div id="plot-subgenres" class="chart-box"></div>
     </div>
 
@@ -2438,8 +2571,8 @@ window.openBookDetailModal = function (bookId, subTab = "info") {
         </div>
       </div>
 
-      <label>✨ Sous-genres Fantasy (séparés par virgules)</label>
-      <input id="m-ed-subg" value="${escapeHtml((book.fantasy_subgenres || []).join(", "))}" placeholder="Ex: Romantasy, Cozy Fantasy, Grimdark" />
+      <label>✨ Sous-genres (séparés par virgules)</label>
+      <input id="m-ed-subg" value="${escapeHtml((book.fantasy_subgenres || []).join(", "))}" placeholder="Ex: Romantasy, Thriller Psychologique, Space Opera, Cozy Mystery" />
 
       <label>URL Couverture</label>
       <input id="m-ed-cover" value="${escapeHtml(book.cover_url || "")}" />
@@ -2653,7 +2786,7 @@ function renderAuthView(statusObj = null) {
           </div>
         </div>
         <label>Votre prénom</label>
-        <input id="auth-name" value="Morgane" placeholder="Morgane" />
+        <input id="auth-name" value="" placeholder="Votre prénom" />
         <label>Votre email *</label>
         <input type="email" id="auth-email" placeholder="votre@email.com" />
         <label>Choisissez un mot de passe *</label>
@@ -2712,7 +2845,7 @@ function renderAuthView(statusObj = null) {
         </button>
       ` : `
         <label>Code d'invitation Bêta *</label>
-        <input id="reg-code" placeholder="Code remis par Morgane" style="border-color:var(--primary-light);font-weight:700;" />
+        <input id="reg-code" placeholder="Entrez votre code d'invitation" style="border-color:var(--primary-light);font-weight:700;" />
         <label>Votre prénom *</label>
         <input id="reg-name" placeholder="Ex: Camille" />
         <label>Votre email *</label>
@@ -2733,7 +2866,7 @@ window.setAuthScreenMode = function (m) {
 };
 
 window.submitOwnerSetup = async function () {
-  const display_name = document.getElementById("auth-name").value.trim() || "Morgane";
+  const display_name = document.getElementById("auth-name").value.trim() || "Propriétaire";
   const email = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-pass").value;
   if (!email || password.length < 4) {
