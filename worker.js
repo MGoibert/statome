@@ -3,6 +3,7 @@
  * Works out-of-the-box with `npx wrangler deploy` on Cloudflare Workers & Pages.
  */
 import apiModule from "./api/index.js";
+import { BUILD_DATABASE_URL } from "./build-env.js";
 
 const CORS_HEADERS = {
   "Content-Type": "application/json",
@@ -35,8 +36,13 @@ export default {
         } catch {}
       }
 
+      const mergedEnv = {
+        ...(env || {}),
+        DATABASE_URL: (env && env.DATABASE_URL) || BUILD_DATABASE_URL || ""
+      };
+
       const handler = apiModule.handleApiRequest || apiModule;
-      const result = await handler({ query, headers, body, env: env || {} });
+      const result = await handler({ query, headers, body, env: mergedEnv });
 
       return new Response(JSON.stringify(result.data), {
         status: result.status || 200,
