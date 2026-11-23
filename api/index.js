@@ -698,7 +698,8 @@ async function enrichBookMetadata(isbnOrQuery) {
 // ==========================================
 // AUTHENTIFICATION & MULTI-TENANT (CRYPTO)
 // ==========================================
-const crypto = require("crypto");
+const crypto = require("node:crypto");
+const { Buffer } = require("node:buffer");
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
