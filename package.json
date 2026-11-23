@@ -3,6 +3,6 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
-    "build": "echo 'PWA static ready'"
+    "build": "node -e 'if (process.env.DATABASE_URL) { const fs = require(\"fs\"); fs.appendFileSync(\"wrangler.toml\", \"\\n[vars]\\nDATABASE_URL = \" + JSON.stringify(process.env.DATABASE_URL) + \"\\n\"); console.log(\"Injected DATABASE_URL into Worker vars\"); }'"
   }
 }
