@@ -2631,20 +2631,25 @@ function showAppShell(authenticated) {
   if (accBtn) accBtn.style.display = authenticated ? "inline-flex" : "none";
 }
 
-function renderAuthView(needsSetup = false) {
+let authScreenMode = "login"; // "login" | "register"
+let lastAuthStatus = { needs_setup: false, beta_open: true, max_users: 10, user_count: 1, spots_left: 9, allow_signups: true };
+
+function renderAuthView(statusObj = null) {
+  if (statusObj) lastAuthStatus = statusObj;
+  const st = lastAuthStatus;
   showAppShell(false);
   setSyncStatus(false, "Verrouillé");
   const el = document.getElementById("view-auth");
   if (!el) return;
 
-  if (needsSetup) {
+  if (st.needs_setup) {
     el.innerHTML = `
       <div class="card" style="max-width:440px;margin:24px auto;padding:24px;">
         <div style="text-align:center;margin-bottom:16px;">
           <div style="font-size:2.6rem;">🔐</div>
           <h2 style="margin:8px 0 4px;">Configuration Propriétaire</h2>
           <div style="font-size:0.83rem;color:var(--muted);">
-            Créez votre compte personnel pour rattacher votre bibliothèque actuelle et <b>verrouiller les inscriptions publiques</b>.
+            Créez votre compte personnel pour rattacher votre bibliothèque actuelle.
           </div>
         </div>
         <label>Votre prénom</label>
@@ -2654,20 +2659,50 @@ function renderAuthView(needsSetup = false) {
         <label>Choisissez un mot de passe *</label>
         <input type="password" id="auth-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')window.submitOwnerSetup()" />
         <button class="btn btn-primary" style="width:100%;margin-top:18px;padding:14px;" onclick="window.submitOwnerSetup()">
-          🔒 Créer mon compte & Verrouiller l'accès
+          🔒 Créer mon compte Propriétaire
         </button>
       </div>
     `;
-  } else {
-    el.innerHTML = `
-      <div class="card" style="max-width:420px;margin:28px auto;padding:24px;">
-        <div style="text-align:center;margin-bottom:16px;">
-          <div style="font-size:2.6rem;">📖</div>
-          <h2 style="margin:8px 0 4px;">Connexion à StatOme</h2>
-          <div style="font-size:0.8rem;color:#F59E0B;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);padding:6px 10px;border-radius:8px;margin-top:8px;">
-            🛡️ Accès privé — Les inscriptions publiques sont actuellement fermées.
+    return;
+  }
+
+  const canSignup = Boolean(st.allow_signups);
+  const spotsLeft = Number(st.spots_left ?? 9);
+  const maxUsers = Number(st.max_users ?? 10);
+  const userCount = Number(st.user_count ?? 1);
+
+  if (!canSignup && authScreenMode === "register") {
+    authScreenMode = "login";
+  }
+
+  el.innerHTML = `
+    <div class="card" style="max-width:440px;margin:24px auto;padding:22px;">
+      <div style="text-align:center;margin-bottom:14px;">
+        <div style="font-size:2.5rem;">📖</div>
+        <h2 style="margin:6px 0 4px;">StatOme <span style="font-size:0.8rem;color:var(--primary-light);font-weight:600;">by TomeFab</span></h2>
+        ${canSignup ? `
+          <div style="font-size:0.78rem;color:#34D399;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.35);padding:5px 10px;border-radius:8px;margin-top:6px;">
+            ✨ Bêta Privée ouverte sur invitation (${spotsLeft} place(s) disponible(s) sur ${maxUsers})
           </div>
+        ` : `
+          <div style="font-size:0.78rem;color:#F59E0B;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);padding:5px 10px;border-radius:8px;margin-top:6px;">
+            🔒 Bêta Privée complète ou fermée (${userCount}/${maxUsers} places utilisées)
+          </div>
+        `}
+      </div>
+
+      ${canSignup ? `
+        <div class="mode-toggle" style="margin-bottom:14px;">
+          <button class="mode-btn ${authScreenMode === "login" ? "active-focus" : ""}" onclick="window.setAuthScreenMode('login')">
+            🔓 Connexion
+          </button>
+          <button class="mode-btn ${authScreenMode === "register" ? "active-focus" : ""}" onclick="window.setAuthScreenMode('register')">
+            ✨ Rejoindre la Bêta
+          </button>
         </div>
+      ` : ""}
+
+      ${authScreenMode === "login" ? `
         <label>Email</label>
         <input type="email" id="login-email" placeholder="votre@email.com" />
         <label>Mot de passe</label>
@@ -2675,10 +2710,27 @@ function renderAuthView(needsSetup = false) {
         <button class="btn btn-primary" style="width:100%;margin-top:18px;padding:14px;" onclick="window.submitLogin()">
           🔓 Se connecter (Session permanente 1 an)
         </button>
-      </div>
-    `;
-  }
+      ` : `
+        <label>Code d'invitation Bêta *</label>
+        <input id="reg-code" placeholder="Code remis par Morgane" style="border-color:var(--primary-light);font-weight:700;" />
+        <label>Votre prénom *</label>
+        <input id="reg-name" placeholder="Ex: Camille" />
+        <label>Votre email *</label>
+        <input type="email" id="reg-email" placeholder="votre@email.com" />
+        <label>Choisissez un mot de passe *</label>
+        <input type="password" id="reg-pass" placeholder="4 caractères minimum" onkeydown="if(event.key==='Enter')window.submitBetaRegister()" />
+        <button class="btn btn-success" style="width:100%;margin-top:18px;padding:14px;" onclick="window.submitBetaRegister()">
+          ✨ Créer mon espace Bêta-Testeur
+        </button>
+      `}
+    </div>
+  `;
 }
+
+window.setAuthScreenMode = function (m) {
+  authScreenMode = m;
+  renderAuthView();
+};
 
 window.submitOwnerSetup = async function () {
   const display_name = document.getElementById("auth-name").value.trim() || "Morgane";
@@ -2717,27 +2769,173 @@ window.submitLogin = async function () {
   }
 };
 
-window.openAccountModal = function () {
-  const u = getAuthUser() || { name: "Morgane", email: "" };
+window.submitBetaRegister = async function () {
+  const invite_code = document.getElementById("reg-code").value.trim();
+  const display_name = document.getElementById("reg-name").value.trim();
+  const email = document.getElementById("reg-email").value.trim();
+  const password = document.getElementById("reg-pass").value;
+  if (!invite_code) return alert("Le code d'invitation Bêta est requis.");
+  if (!email || password.length < 4) return alert("Veuillez saisir un email valide et un mot de passe (4 caractères min).");
+  setSyncStatus(true, "Inscription...");
+  try {
+    const res = await apiCall("auth_register", { invite_code, display_name, email, password });
+    localStorage.setItem(AUTH_TOKEN_KEY, res.token);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(res.user));
+    state.books = [];
+    state.sessions = [];
+    state.notes = [];
+    saveLocalCache();
+    showAppShell(true);
+    await window.syncFromServer();
+  } catch (e) {
+    setSyncStatus(false, "Verrouillé");
+    alert(e.message);
+  }
+};
+
+window.exportLibraryCsv = function () {
+  if (!state.books.length) return alert("Votre bibliothèque est vide.");
+  const cols = ["title", "author", "series_name", "series_volume", "status", "page_count", "current_page", "rating_global", "format", "price", "publisher", "publication_year", "isbn", "started_at", "finished_at"];
+  const csvRows = [cols.join(";")];
+  for (const b of state.books) {
+    const row = cols.map((k) => `"${String(b[k] ?? "").replace(/"/g, '""')}"`);
+    csvRows.push(row.join(";"));
+  }
+  const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `statome_bibliotheque_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+window.openAccountModal = async function () {
+  const u = getAuthUser() || { name: "Lecteur", email: "", admin: false };
+  const isAdmin = Boolean(u.admin) || Number(u.uid) === 1;
+
   openModal(`
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <h3 style="margin:0;">👤 Mon Compte StatOme</h3>
       <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
     </div>
     <div class="card" style="margin-top:12px;">
-      <div style="font-weight:700;font-size:1rem;">${escapeHtml(u.name || "Propriétaire")}</div>
-      <div style="font-size:0.84rem;color:var(--muted);margin-top:2px;">${escapeHtml(u.email || "")}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-weight:700;font-size:1.02rem;">${escapeHtml(u.name || "Utilisateur")}</div>
+          <div style="font-size:0.82rem;color:var(--muted);">${escapeHtml(u.email || "")}</div>
+        </div>
+        <span class="status-badge" style="background:rgba(99,102,241,0.2);color:#818CF8;border:1px solid #6366F1;">
+          ${isAdmin ? "👑 Propriétaire" : "✨ Bêta-Testeur"}
+        </span>
+      </div>
       <div style="margin-top:10px;font-size:0.78rem;color:#34D399;">
-        🛡️ Espace personnel isolé • Session permanente active (365 jours)
+        🛡️ Bibliothèque personnelle isolée (${state.books.length} livres • ${state.sessions.length} sessions)
       </div>
-      <div style="margin-top:4px;font-size:0.78rem;color:#F59E0B;">
-        🔒 Inscriptions publiques : <b>Bloquées</b>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">
+        <button class="btn" style="font-size:0.8rem;padding:9px;" onclick="window.exportLibraryCsv()">📥 Exporter CSV</button>
+        <button class="btn btn-danger" style="font-size:0.8rem;padding:9px;" onclick="window.logoutUser()">🚪 Déconnexion</button>
       </div>
+      ${!isAdmin ? `
+        <button class="btn btn-danger" style="width:100%;margin-top:8px;font-size:0.76rem;padding:8px;" onclick="window.deleteMyBetaAccount()">
+          🗑️ Supprimer définitivement mon compte et mes données
+        </button>
+      ` : ""}
     </div>
-    <button class="btn btn-danger" style="width:100%;" onclick="window.logoutUser()">
-      🚪 Se déconnecter de cet appareil
-    </button>
+    ${isAdmin ? `<div id="admin-beta-box"><div style="text-align:center;color:var(--muted);font-size:0.82rem;padding:12px;">Chargement du panneau Bêta...</div></div>` : ""}
   `);
+
+  if (isAdmin) {
+    try {
+      const adm = await apiCall("admin_get_dashboard");
+      const s = adm.settings || { beta_open: true, invite_code: "TOMEFAB", max_users: 10 };
+      const users = adm.users || [];
+      const box = document.getElementById("admin-beta-box");
+      if (!box) return;
+
+      const usersHtml = users
+        .map((usr) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
+            <div style="min-width:0;flex:1;">
+              <div><b>${escapeHtml(usr.display_name)}</b> ${usr.is_admin ? '<span style="color:#818CF8;">(Vous)</span>' : ""}</div>
+              <div style="color:var(--muted);font-size:0.74rem;">${escapeHtml(usr.email)} • ${usr.books_count} livres • ${usr.sessions_count} sessions</div>
+            </div>
+            <div style="display:flex;gap:5px;margin-left:8px;">
+              <button class="btn" style="padding:4px 8px;font-size:0.72rem;" onclick="window.adminResetUserPass(${usr.id}, '${escapeHtml(usr.display_name)}')" title="Réinitialiser son mot de passe">🔑 MDP</button>
+              ${!usr.is_admin ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:0.72rem;" onclick="window.adminDeleteUser(${usr.id}, '${escapeHtml(usr.display_name)}')" title="Supprimer ce testeur">🗑️</button>` : ""}
+            </div>
+          </div>
+        `)
+        .join("");
+
+      box.innerHTML = `
+        <div class="card" style="border-color:#6366F1;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-weight:800;font-size:0.95rem;color:var(--primary-light);">🛠️ Gestion Bêta-Testeurs</span>
+            <span style="font-weight:700;font-size:0.82rem;color:#34D399;">${users.length} / ${s.max_users} places</span>
+          </div>
+
+          <div class="grid-3">
+            <div>
+              <label>Inscriptions Bêta</label>
+              <select id="adm-beta-open">
+                <option value="true" ${s.beta_open ? "selected" : ""}>🟢 Ouvertes</option>
+                <option value="false" ${!s.beta_open ? "selected" : ""}>🔴 Fermées</option>
+              </select>
+            </div>
+            <div>
+              <label>Code d'invitation</label>
+              <input id="adm-invite-code" value="${escapeHtml(s.invite_code)}" />
+            </div>
+            <div>
+              <label>Max utilisateurs</label>
+              <input type="number" id="adm-max-users" value="${s.max_users}" min="1" max="500" />
+            </div>
+          </div>
+
+          <button class="btn btn-primary" style="width:100%;margin-top:10px;padding:9px;font-size:0.84rem;" onclick="window.saveAdminBetaSettings()">
+            💾 Enregistrer les réglages Bêta
+          </button>
+
+          <div style="margin-top:14px;font-weight:700;font-size:0.83rem;margin-bottom:4px;">
+            👥 Comptes inscrits (${users.length}/${s.max_users})
+          </div>
+          ${usersHtml}
+        </div>
+      `;
+    } catch (e) {
+      const box = document.getElementById("admin-beta-box");
+      if (box) box.innerHTML = `<div style="color:var(--danger);font-size:0.8rem;">Erreur chargement admin: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+};
+
+window.saveAdminBetaSettings = async function () {
+  const beta_open = document.getElementById("adm-beta-open").value === "true";
+  const invite_code = document.getElementById("adm-invite-code").value.trim() || "TOMEFAB";
+  const max_users = Number(document.getElementById("adm-max-users").value || 10);
+  await apiCall("admin_update_settings", { beta_open, invite_code, max_users });
+  alert("Réglages Bêta mis à jour !");
+  window.openAccountModal();
+};
+
+window.adminResetUserPass = async function (targetId, name) {
+  const newPass = prompt(`Saisissez un nouveau mot de passe temporaire pour ${name} (4 caractères min) :`);
+  if (!newPass || newPass.trim().length < 4) return;
+  await apiCall("admin_reset_password", { target_user_id: targetId, new_password: newPass.trim() });
+  alert(`Mot de passe de ${name} réinitialisé avec succès !`);
+};
+
+window.adminDeleteUser = async function (targetId, name) {
+  if (!confirm(`Supprimer le compte bêta-testeur de ${name} et libérer sa place ?`)) return;
+  await apiCall("admin_delete_user", { target_user_id: targetId });
+  window.openAccountModal();
+};
+
+window.deleteMyBetaAccount = async function () {
+  if (!confirm("Voulez-vous vraiment supprimer définitivement votre compte Bêta et toutes vos données ?")) return;
+  await apiCall("delete_my_account", {});
+  await window.logoutUser();
 };
 
 window.logoutUser = async function () {
@@ -2760,16 +2958,15 @@ window.checkAuthAndBoot = async function () {
     window.syncFromServer(false);
     return;
   }
-  // Pas de jeton local -> vérifier si le compte propriétaire doit être initialisé ou afficher l'écran de connexion
   state.books = [];
   state.sessions = [];
   state.notes = [];
   showAppShell(false);
   try {
     const status = await apiCall("auth_status");
-    renderAuthView(Boolean(status.needs_setup));
+    renderAuthView(status);
   } catch {
-    renderAuthView(false);
+    renderAuthView();
   }
 };
 

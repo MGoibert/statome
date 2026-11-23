@@ -746,41 +746,62 @@ function verifyAuthToken(token, connStr) {
   }
 }
 
-function extractToken(req, body) {
-  const authHeader = req.headers["authorization"] || req.headers["x-auth-token"] || "";
+function extractToken(headers, query, body) {
+  const authHeader = (headers && (headers["authorization"] || headers["Authorization"] || headers["x-auth-token"])) || "";
   if (authHeader.startsWith("Bearer ")) return authHeader.slice(7).trim();
   if (authHeader) return authHeader.trim();
-  return (body && body.token) || (req.query && req.query.token) || "";
+  return (body && body.token) || (query && query.token) || "";
 }
 
-module.exports = async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-auth-token, x-database-url");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
+async function getBetaSettings(connStr) {
   try {
-    const action = (req.query && req.query.action) || (req.body && req.body.action) || "bootstrap";
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const connStr = getConnectionString(req);
+    const rows = await neonQuery(connStr, "SELECT * FROM app_settings WHERE id = 1");
+    if (rows && rows.length > 0) {
+      const s = rows[0];
+      return {
+        beta_open: s.beta_open === true || s.beta_open === "t" || s.beta_open === "true",
+        invite_code: String(s.invite_code || "TOMEFAB").trim(),
+        max_users: Number(s.max_users || 10)
+      };
+    }
+  } catch {}
+  return { beta_open: true, invite_code: "TOMEFAB", max_users: 10 };
+}
 
-    // 1. Vérification du statut d'authentification (initialisation propriétaire vs login)
+async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} }) {
+  try {
+    const action = query.action || body.action || "bootstrap";
+    let connStr = env.DATABASE_URL || process.env.DATABASE_URL || headers["x-database-url"] || "";
+    if (connStr.startsWith("postgres://")) {
+      connStr = connStr.replace("postgres://", "postgresql://");
+    }
+    connStr = connStr.trim();
+
+    // 1. Vérification du statut d'authentification & places disponibles dans la Bêta (max 10)
     if (action === "auth_status") {
-      const countRows = await neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users");
+      const [countRows, settings] = await Promise.all([
+        neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users"),
+        getBetaSettings(connStr)
+      ]);
       const userCount = Number((countRows[0] && countRows[0].cnt) || 0);
-      const allowSignups = process.env.ALLOW_SIGNUPS === "true";
-      const token = extractToken(req, body);
+      const spotsLeft = Math.max(0, settings.max_users - userCount);
+      const allowSignups = Boolean(settings.beta_open) && spotsLeft > 0;
+      const token = extractToken(headers, query, body);
       const decoded = verifyAuthToken(token, connStr);
-      return res.status(200).json({
-        ok: true,
-        needs_setup: userCount === 0,
-        allow_signups: allowSignups,
-        authenticated: Boolean(decoded),
-        user: decoded || null
-      });
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          needs_setup: userCount === 0,
+          beta_open: settings.beta_open,
+          max_users: settings.max_users,
+          user_count: userCount,
+          spots_left: spotsLeft,
+          allow_signups: allowSignups,
+          authenticated: Boolean(decoded),
+          user: decoded || null
+        }
+      };
     }
 
     // 2. Configuration initiale du compte Propriétaire (uniquement si 0 utilisateur en base)
@@ -788,13 +809,13 @@ module.exports = async function handler(req, res) {
       const countRows = await neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users");
       const userCount = Number((countRows[0] && countRows[0].cnt) || 0);
       if (userCount > 0) {
-        return res.status(403).json({ ok: false, error: "Le compte propriétaire a déjà été configuré. Les inscriptions sont fermées." });
+        return { status: 403, data: { ok: false, error: "Le compte propriétaire a déjà été configuré." } };
       }
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
       const displayName = String(body.display_name || "Morgane").trim();
       if (!email || password.length < 4) {
-        return res.status(400).json({ ok: false, error: "Veuillez saisir un email et un mot de passe (4 caractères min)." });
+        return { status: 400, data: { ok: false, error: "Veuillez saisir un email et un mot de passe (4 caractères min)." } };
       }
       const pwHash = hashPassword(password);
       const rows = await neonQuery(
@@ -807,7 +828,6 @@ module.exports = async function handler(req, res) {
       const owner = rows[0];
       const ownerId = Number(owner.id);
 
-      // Rattacher l'intégralité de la bibliothèque existante au compte Propriétaire
       await Promise.all([
         neonQuery(connStr, "UPDATE books SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId]),
         neonQuery(connStr, "UPDATE reading_sessions SET user_id = $1 WHERE user_id IS NULL OR user_id = 1", [ownerId]),
@@ -816,11 +836,14 @@ module.exports = async function handler(req, res) {
       ]);
 
       const token = createAuthToken(owner, connStr);
-      return res.status(200).json({
-        ok: true,
-        token,
-        user: { uid: ownerId, email: owner.email, name: owner.display_name, admin: true }
-      });
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          token,
+          user: { uid: ownerId, email: owner.email, name: owner.display_name, admin: true }
+        }
+      };
     }
 
     // 3. Connexion (Login)
@@ -829,61 +852,199 @@ module.exports = async function handler(req, res) {
       const password = String(body.password || "");
       const rows = await neonQuery(connStr, "SELECT * FROM users WHERE LOWER(email) = $1 LIMIT 1", [email]);
       if (!rows.length || !verifyPassword(password, rows[0].password_hash)) {
-        return res.status(401).json({ ok: false, error: "Email ou mot de passe incorrect." });
+        return { status: 401, data: { ok: false, error: "Email ou mot de passe incorrect." } };
       }
       const u = rows[0];
-      const token = createAuthToken(u, connStr);
-      return res.status(200).json({
-        ok: true,
-        token,
-        user: { uid: Number(u.id), email: u.email, name: u.display_name || u.email, admin: Boolean(u.is_admin) }
-      });
+      const isAdmin = u.is_admin === true || u.is_admin === "t" || u.is_admin === "true" || Number(u.id) === 1;
+      const token = createAuthToken({ ...u, is_admin: isAdmin }, connStr);
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          token,
+          user: { uid: Number(u.id), email: u.email, name: u.display_name || u.email, admin: isAdmin }
+        }
+      };
     }
 
-    // 4. Inscription publique (bloquée par défaut tant que ALLOW_SIGNUPS !== "true")
+    // 4. Inscription Bêta-Testeur (Code d'invitation + Plafond max 10 utilisateurs)
     if (action === "auth_register") {
-      if (process.env.ALLOW_SIGNUPS !== "true") {
-        return res.status(403).json({ ok: false, error: "Les inscriptions publiques sont actuellement fermées." });
+      const [countRows, settings] = await Promise.all([
+        neonQuery(connStr, "SELECT COUNT(*) AS cnt FROM users"),
+        getBetaSettings(connStr)
+      ]);
+      const userCount = Number((countRows[0] && countRows[0].cnt) || 0);
+
+      if (!settings.beta_open) {
+        return { status: 403, data: { ok: false, error: "Les inscriptions à la Bêta sont actuellement fermées par l'administrateur." } };
       }
+      if (userCount >= settings.max_users) {
+        return { status: 403, data: { ok: false, error: `La Bêta est complète (${settings.max_users}/${settings.max_users} places utilisées).` } };
+      }
+
+      const providedCode = String(body.invite_code || "").trim().toUpperCase();
+      if (!providedCode || providedCode !== settings.invite_code.toUpperCase()) {
+        return { status: 403, data: { ok: false, error: "Code d'invitation Bêta invalide." } };
+      }
+
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
       const displayName = String(body.display_name || email.split("@")[0]).trim();
-      if (!email || password.length < 6) {
-        return res.status(400).json({ ok: false, error: "Email valide et mot de passe de 6 caractères minimum requis." });
+      if (!email || !email.includes("@") || password.length < 4) {
+        return { status: 400, data: { ok: false, error: "Email valide et mot de passe d'au moins 4 caractères requis." } };
       }
       const existing = await neonQuery(connStr, "SELECT id FROM users WHERE LOWER(email) = $1", [email]);
       if (existing.length > 0) {
-        return res.status(400).json({ ok: false, error: "Un compte existe déjà avec cet email." });
+        return { status: 400, data: { ok: false, error: "Un compte existe déjà avec cet email." } };
       }
       const pwHash = hashPassword(password);
       const rows = await neonQuery(
         connStr,
         `INSERT INTO users (email, password_hash, display_name, is_admin, plan)
-         VALUES ($1, $2, $3, FALSE, 'free')
+         VALUES ($1, $2, $3, FALSE, 'beta')
          RETURNING id, email, display_name, is_admin, plan`,
         [email, pwHash, displayName]
       );
       const u = rows[0];
-      const token = createAuthToken(u, connStr);
-      return res.status(200).json({
-        ok: true,
-        token,
-        user: { uid: Number(u.id), email: u.email, name: u.display_name, admin: false }
-      });
+      const token = createAuthToken({ ...u, is_admin: false }, connStr);
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          token,
+          user: { uid: Number(u.id), email: u.email, name: u.display_name, admin: false }
+        }
+      };
     }
 
-    // 5. Toutes les actions suivantes nécessitent un jeton utilisateur valide !
-    const token = extractToken(req, body);
+    // 5. Authentification requise pour toutes les actions suivantes
+    const token = extractToken(headers, query, body);
     const authUser = verifyAuthToken(token, connStr);
     if (!authUser || !authUser.uid) {
-      return res.status(401).json({ ok: false, auth_required: true, error: "Authentification requise." });
+      return { status: 401, data: { ok: false, auth_required: true, error: "Authentification requise." } };
     }
     const userId = Number(authUser.uid);
+    const isAdmin = Boolean(authUser.admin) || userId === 1;
 
+    // 6. Actions d'administration Bêta (réservées à Morgane / Propriétaire)
+    if (action === "admin_get_dashboard") {
+      if (!isAdmin) return { status: 403, data: { ok: false, error: "Accès réservé au propriétaire." } };
+      const [settings, usersRows] = await Promise.all([
+        getBetaSettings(connStr),
+        neonQuery(
+          connStr,
+          `SELECT u.id, u.email, u.display_name, u.is_admin, u.plan, u.created_at,
+                  (SELECT COUNT(*) FROM books b WHERE b.user_id = u.id) AS books_count,
+                  (SELECT COUNT(*) FROM reading_sessions s WHERE s.user_id = u.id) AS sessions_count
+           FROM users u
+           ORDER BY u.id ASC`
+        )
+      ]);
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          settings,
+          users: usersRows.map((u) => ({
+            id: Number(u.id),
+            email: u.email,
+            display_name: u.display_name || u.email,
+            is_admin: u.is_admin === true || u.is_admin === "t" || Number(u.id) === 1,
+            plan: u.plan || "beta",
+            created_at: u.created_at,
+            books_count: Number(u.books_count || 0),
+            sessions_count: Number(u.sessions_count || 0)
+          }))
+        }
+      };
+    }
+
+    if (action === "admin_update_settings") {
+      if (!isAdmin) return { status: 403, data: { ok: false, error: "Accès réservé au propriétaire." } };
+      const betaOpen = Boolean(body.beta_open);
+      const inviteCode = String(body.invite_code || "TOMEFAB").trim().toUpperCase();
+      const maxUsers = Math.max(1, Math.min(500, Number(body.max_users || 10)));
+      await neonQuery(
+        connStr,
+        `INSERT INTO app_settings (id, beta_open, invite_code, max_users, updated_at)
+         VALUES (1, $1, $2, $3, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           beta_open = EXCLUDED.beta_open,
+           invite_code = EXCLUDED.invite_code,
+           max_users = EXCLUDED.max_users,
+           updated_at = NOW()`,
+        [betaOpen, inviteCode, maxUsers]
+      );
+      return { status: 200, data: { ok: true } };
+    }
+
+    if (action === "admin_reset_password") {
+      if (!isAdmin) return { status: 403, data: { ok: false, error: "Accès réservé au propriétaire." } };
+      const targetId = Number(body.target_user_id);
+      const newPass = String(body.new_password || "").trim();
+      if (!targetId || newPass.length < 4) {
+        return { status: 400, data: { ok: false, error: "Nouveau mot de passe de 4 caractères min requis." } };
+      }
+      const pwHash = hashPassword(newPass);
+      await neonQuery(connStr, "UPDATE users SET password_hash = $1 WHERE id = $2", [pwHash, targetId]);
+      return { status: 200, data: { ok: true } };
+    }
+
+    if (action === "admin_delete_user") {
+      if (!isAdmin) return { status: 403, data: { ok: false, error: "Accès réservé au propriétaire." } };
+      const targetId = Number(body.target_user_id);
+      if (!targetId || targetId === 1 || targetId === userId) {
+        return { status: 400, data: { ok: false, error: "Impossible de supprimer le compte propriétaire." } };
+      }
+      await Promise.all([
+        neonQuery(connStr, "DELETE FROM reading_sessions WHERE user_id = $1", [targetId]),
+        neonQuery(connStr, "DELETE FROM book_notes WHERE user_id = $1", [targetId]),
+        neonQuery(connStr, "DELETE FROM active_timer WHERE id = $1 OR user_id = $1", [targetId]),
+        neonQuery(connStr, "DELETE FROM books WHERE user_id = $1", [targetId]),
+        neonQuery(connStr, "DELETE FROM users WHERE id = $1", [targetId])
+      ]);
+      return { status: 200, data: { ok: true } };
+    }
+
+    if (action === "delete_my_account") {
+      if (userId === 1 || isAdmin) {
+        return { status: 400, data: { ok: false, error: "Le compte propriétaire ne peut pas être supprimé d'ici." } };
+      }
+      await Promise.all([
+        neonQuery(connStr, "DELETE FROM reading_sessions WHERE user_id = $1", [userId]),
+        neonQuery(connStr, "DELETE FROM book_notes WHERE user_id = $1", [userId]),
+        neonQuery(connStr, "DELETE FROM active_timer WHERE id = $1 OR user_id = $1", [userId]),
+        neonQuery(connStr, "DELETE FROM books WHERE user_id = $1", [userId]),
+        neonQuery(connStr, "DELETE FROM users WHERE id = $1", [userId])
+      ]);
+      return { status: 200, data: { ok: true } };
+    }
+
+    // 7. Enrichissement avec Cache Catalogue Partagé entre Bêta-Testeurs (0.02s si déjà scanné !)
     if (action === "search_external" || action === "enrich_book") {
-      const q = (req.query && req.query.q) || body.q || "";
+      const q = String(query.q || body.q || "").trim();
+      const cacheKey = q.toLowerCase().replace(/\s+/g, " ").slice(0, 110);
+      if (cacheKey) {
+        const cached = await neonQuery(connStr, "SELECT payload FROM catalog_cache WHERE query_key = $1", [cacheKey]).catch(() => []);
+        if (cached && cached.length > 0 && cached[0].payload) {
+          try {
+            const parsed = JSON.parse(cached[0].payload);
+            if (parsed && parsed.best && parsed.best.title) {
+              return { status: 200, data: { ok: true, best: parsed.best, results: parsed.results || [parsed.best], cached: true } };
+            }
+          } catch {}
+        }
+      }
       const { best, results } = await enrichBookMetadata(q);
-      return res.status(200).json({ ok: true, best, results });
+      if (cacheKey && best && best.title) {
+        neonQuery(
+          connStr,
+          `INSERT INTO catalog_cache (query_key, payload, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (query_key) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()`,
+          [cacheKey, JSON.stringify({ best, results })]
+        ).catch(() => {});
+      }
+      return { status: 200, data: { ok: true, best, results } };
     }
 
     if (action === "bootstrap") {
@@ -916,14 +1077,17 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      return res.status(200).json({
-        ok: true,
-        user: authUser,
-        books,
-        sessions,
-        notes,
-        active_timer: activeTimer
-      });
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          user: { ...authUser, admin: isAdmin },
+          books,
+          sessions,
+          notes,
+          active_timer: activeTimer
+        }
+      };
     }
 
     if (action === "save_timer") {
@@ -942,7 +1106,7 @@ module.exports = async function handler(req, res) {
            updated_at = NOW()`,
         [userId, book_id || null, Boolean(is_running), start_time || null, Number(accumulated_seconds || 0), is_focused !== false]
       );
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "clear_timer") {
@@ -951,7 +1115,7 @@ module.exports = async function handler(req, res) {
         `UPDATE active_timer SET is_running = FALSE, start_time = NULL, accumulated_seconds = 0, book_id = NULL, updated_at = NOW() WHERE id = $1 OR user_id = $1`,
         [userId]
       );
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "add_session") {
@@ -990,12 +1154,12 @@ module.exports = async function handler(req, res) {
         [userId]
       ).catch(() => {});
 
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "delete_session") {
       await neonQuery(connStr, "DELETE FROM reading_sessions WHERE id = $1 AND user_id = $2", [Number(body.session_id), userId]);
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "add_note") {
@@ -1012,12 +1176,12 @@ module.exports = async function handler(req, res) {
           String(body.content || "").trim()
         ]
       );
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "delete_note") {
       await neonQuery(connStr, "DELETE FROM book_notes WHERE id = $1 AND user_id = $2", [Number(body.note_id), userId]);
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "add_book") {
@@ -1058,7 +1222,7 @@ module.exports = async function handler(req, res) {
           body.status === "En cours" ? new Date().toISOString().slice(0, 10) : null
         ]
       );
-      return res.status(200).json({ ok: true, id: rows[0] ? Number(rows[0].id) : null });
+      return { status: 200, data: { ok: true, id: rows[0] ? Number(rows[0].id) : null } };
     }
 
     if (action === "update_book") {
@@ -1094,16 +1258,38 @@ module.exports = async function handler(req, res) {
         vals.push(userId);
         await neonQuery(connStr, `UPDATE books SET ${sets.join(", ")} WHERE id = $${idx} AND user_id = $${idx + 1}`, vals);
       }
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
     if (action === "delete_book") {
       await neonQuery(connStr, "DELETE FROM books WHERE id = $1 AND user_id = $2", [Number(body.book_id), userId]);
-      return res.status(200).json({ ok: true });
+      return { status: 200, data: { ok: true } };
     }
 
-    return res.status(400).json({ ok: false, error: `Action inconnue: ${action}` });
+    return { status: 400, data: { ok: false, error: `Action inconnue: ${action}` } };
   } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message || String(err) });
+    return { status: 500, data: { ok: false, error: err.message || String(err) } };
   }
-};
+}
+
+async function vercelHandler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-auth-token, x-database-url");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  const result = await handleApiRequest({
+    query: req.query || {},
+    headers: req.headers || {},
+    body,
+    env: process.env || {}
+  });
+  return res.status(result.status).json(result.data);
+}
+
+vercelHandler.handleApiRequest = handleApiRequest;
+module.exports = vercelHandler;
