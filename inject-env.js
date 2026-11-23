@@ -8,10 +8,11 @@ const isPreviewBranch = Boolean(branch && branch !== "main");
 const dbUrl = isPreviewBranch
   ? (process.env.PREVIEW_DATABASE_URL || process.env.DATABASE_URL || "")
   : (process.env.DATABASE_URL || "");
+const googleBooksApiKey = process.env.GOOGLE_BOOKS_API_KEY || "";
 
 fs.writeFileSync(
   "build-env.js",
-  `export const BUILD_DATABASE_URL = ${JSON.stringify(dbUrl)};\n`,
+  `export const BUILD_DATABASE_URL = ${JSON.stringify(dbUrl)};\nexport const BUILD_GOOGLE_BOOKS_API_KEY = ${JSON.stringify(googleBooksApiKey)};\n`,
   "utf8"
 );
 
@@ -20,8 +21,10 @@ if (dbUrl && fs.existsSync("wrangler.toml")) {
   const currentToml = fs.readFileSync("wrangler.toml", "utf8");
   if (!currentToml.includes("[vars]")) {
     let extra = `\n[vars]\nDATABASE_URL = ${JSON.stringify(dbUrl)}\n`;
+    if (googleBooksApiKey) extra += `GOOGLE_BOOKS_API_KEY = ${JSON.stringify(googleBooksApiKey)}\n`;
     if (isPreviewBranch && !currentToml.includes("[previews.vars]")) {
       extra += `\n[previews.vars]\nDATABASE_URL = ${JSON.stringify(dbUrl)}\n`;
+      if (googleBooksApiKey) extra += `GOOGLE_BOOKS_API_KEY = ${JSON.stringify(googleBooksApiKey)}\n`;
     }
     fs.appendFileSync("wrangler.toml", extra, "utf8");
   }

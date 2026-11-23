@@ -3,7 +3,7 @@
  * Works out-of-the-box with `npx wrangler deploy` on Cloudflare Workers & Pages.
  */
 import apiModule from "./api/index.js";
-import { BUILD_DATABASE_URL } from "./build-env.js";
+import { BUILD_DATABASE_URL, BUILD_GOOGLE_BOOKS_API_KEY } from "./build-env.js";
 
 const CORS_HEADERS = {
   "Content-Type": "application/json",
@@ -38,7 +38,8 @@ export default {
 
       const mergedEnv = {
         ...(env || {}),
-        DATABASE_URL: (env && env.DATABASE_URL) || BUILD_DATABASE_URL || ""
+        DATABASE_URL: (env && env.DATABASE_URL) || BUILD_DATABASE_URL || "",
+        GOOGLE_BOOKS_API_KEY: (env && env.GOOGLE_BOOKS_API_KEY) || BUILD_GOOGLE_BOOKS_API_KEY || ""
       };
 
       const handler = apiModule.handleApiRequest || apiModule;

@@ -321,6 +321,48 @@ function inferFantasySubgenres(text = "", publisher = "", title = "", author = "
   return detected.slice(0, 3);
 }
 
+const SUBGENRE_TO_GENRE = {
+  "Progression Fantasy / LitRPG": ["Fantasy"],
+  "Romantasy / Romantic Fantasy": ["Fantasy", "Romance"],
+  "Flintlock Fantasy / Militaire": ["Fantasy"],
+  "Grimdark": ["Fantasy"],
+  "Cozy Fantasy / Tranche de vie": ["Fantasy"],
+  "Contes & Réécritures (Retellings)": ["Fantasy"],
+  "Uchronie / Histoire Alternative": ["Fantasy"],
+  "Fantasy Historique": ["Fantasy"],
+  "Sword & Sorcery": ["Fantasy"],
+  "Science Fantasy": ["Fantasy", "Science-Fiction"],
+  "Steampunk": ["Science-Fiction"],
+  "Urban Fantasy": ["Fantasy"],
+  "Dark Fantasy": ["Fantasy"],
+  "High / Epic Fantasy": ["Fantasy"],
+  "Fantasy Mythologique": ["Fantasy"],
+  "Young Adult Fantasy": ["Fantasy"],
+  "Space Opera": ["Science-Fiction"],
+  "Dystopie / Post-Apocalyptique": ["Science-Fiction"],
+  "Cyberpunk / Solarpunk": ["Science-Fiction"],
+  "Hard SF": ["Science-Fiction"],
+  "Thriller Psychologique": ["Thriller / Polar"],
+  "Polar / Enquête policière": ["Thriller / Polar"],
+  "Cosy Mystery": ["Thriller / Polar"],
+  "Roman Noir / Hardboiled": ["Thriller / Polar"],
+  "Espionnage / Géopolitique": ["Thriller / Polar"],
+  "Romance Contemporaine": ["Romance"],
+  "Rom-Com / Feel-Good": ["Romance"],
+  "Dark Romance": ["Romance"],
+  "New Adult / Campus": ["Romance"],
+  "Romance Historique": ["Romance"],
+  "Classique": ["Littérature & Contemporain"],
+  "Roman Contemporain": ["Littérature & Contemporain"],
+  "Roman Historique": ["Historique"],
+  "Horreur / Épouvante": ["Horreur & Fantastique"],
+  "Gothique": ["Horreur & Fantastique"],
+  "Manga": ["Manga, BD & Graphique"],
+  "Bande Dessinée / Roman Graphique": ["Manga, BD & Graphique"],
+  "Développement Personnel": ["Non-Fiction & Essais"],
+  "Biographie / Mémoires": ["Non-Fiction & Essais"]
+};
+
 async function fetchBnfAuthorCountry(authorRecordId) {
   if (!authorRecordId) return null;
   try {
@@ -594,18 +636,40 @@ async function fetchFromOpenLibrary(isbnOrQuery) {
   return data;
 }
 
-async function fetchFromGoogleBooks(isbnOrQuery) {
+async function fetchOpenLibrarySubjects(title, author = "") {
+  const q = `${cleanTitleFromSeries(title || "")} ${author || ""}`.trim();
+  if (!q) return "";
+  try {
+    const resp = await fetch(
+      `https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=2&fields=title,author_name,subject`,
+      { headers: DEFAULT_HEADERS }
+    );
+    if (!resp.ok) return "";
+    const json = await resp.json();
+    const docs = (json && json.docs) || [];
+    const subjects = [];
+    for (const d of docs) {
+      if (Array.isArray(d.subject)) subjects.push(...d.subject.slice(0, 15));
+    }
+    return subjects.join(" ");
+  } catch {
+    return "";
+  }
+}
+
+async function fetchFromGoogleBooks(isbnOrQuery, apiKey = "") {
   const data = {};
   const results = [];
   const cleanQ = String(isbnOrQuery || "").replace(/-/g, "").trim();
   const isIsbn = /^\d{10}(\d{3})?$/.test(cleanQ);
   const qParam = isIsbn ? `isbn:${cleanQ}` : isbnOrQuery;
+  const keySuffix = apiKey ? `&key=${encodeURIComponent(apiKey)}` : "";
   try {
-    let resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(qParam)}&maxResults=6`);
+    let resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(qParam)}&maxResults=6${keySuffix}`);
     let json = resp.ok ? await resp.json() : null;
     let items = (json && json.items) || [];
     if (items.length === 0 && isIsbn) {
-      resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanQ)}&maxResults=4`);
+      resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanQ)}&maxResults=4${keySuffix}`);
       json = resp.ok ? await resp.json() : null;
       items = (json && json.items) || [];
     }
@@ -643,7 +707,7 @@ async function fetchFromGoogleBooks(isbnOrQuery) {
   return { data, results };
 }
 
-async function enrichBookMetadata(isbnOrQuery) {
+async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
   const cleanInput = String(isbnOrQuery || "").trim();
   const digitsOnly = cleanInput.replace(/[^0-9Xx]/g, "").toUpperCase();
   const isIsbn = (digitsOnly.length === 10 || digitsOnly.length === 13) &&
@@ -675,7 +739,7 @@ async function enrichBookMetadata(isbnOrQuery) {
     fetchFromBnf(isbn || cleanInput),
     fetchFromGoodreads(isbn || cleanInput),
     fetchFromOpenLibrary(isbn || cleanInput),
-    fetchFromGoogleBooks(isbn || cleanInput)
+    fetchFromGoogleBooks(isbn || cleanInput, googleBooksApiKey)
   ]);
 
   // 1. Apply BnF (Official French Edition Authority)
@@ -683,14 +747,22 @@ async function enrichBookMetadata(isbnOrQuery) {
     if (v !== null && v !== undefined && v !== "") result[k] = v;
   }
 
-  // 2. If Goodreads by ISBN didn't match (common for French ISBNs), query Goodreads by Title + Author!
+  // 2. Query Goodreads (by Title+Author) & OpenLibrary Subjects in parallel
   let grData = grInitial;
   const knownTitle = result.title || (gbRes.data && gbRes.data.title) || olData.title || "";
   const knownAuthor = result.author || (gbRes.data && gbRes.data.author) || "";
-  if ((!grData.popularity_score || !grData.series_name) && knownTitle) {
+  let olSubjects = "";
+  if (knownTitle) {
     const qTitleAuth = `${cleanTitleFromSeries(knownTitle)} ${knownAuthor}`.trim();
-    if (qTitleAuth && qTitleAuth.toLowerCase() !== (isbn || cleanInput).toLowerCase()) {
-      const grFallback = await fetchFromGoodreads(qTitleAuth);
+    const needGrFallback = (!grData.popularity_score || !grData.series_name) &&
+      qTitleAuth && qTitleAuth.toLowerCase() !== (isbn || cleanInput).toLowerCase();
+
+    const [grFallback, subjectsRes] = await Promise.all([
+      needGrFallback ? fetchFromGoodreads(qTitleAuth) : Promise.resolve(null),
+      fetchOpenLibrarySubjects(knownTitle, knownAuthor)
+    ]);
+    olSubjects = subjectsRes || "";
+    if (grFallback) {
       for (const [k, v] of Object.entries(grFallback)) {
         if (v !== null && v !== undefined && v !== "" && !grData[k]) grData[k] = v;
       }
@@ -731,8 +803,8 @@ async function enrichBookMetadata(isbnOrQuery) {
     result.title = cleanTitleFromSeries(result.title) || result.title;
   }
 
-  // 6. Infer Genres, Tags & Subgenres (BnF + Goodreads + Google Books)
-  const textBlob = `${result.title} ${result.series_name} ${bnfData.bnf_subjects || ""} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.categories) || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
+  // 6. Infer Genres, Tags & Subgenres (BnF + OpenLibrary Subjects + Goodreads + Google Books)
+  const textBlob = `${result.title} ${result.series_name} ${bnfData.bnf_subjects || ""} ${olSubjects} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.categories) || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
   const { genres, tags } = inferGenresAndTags(textBlob, result.publisher);
   if (!result.genres || result.genres.length === 0) result.genres = genres;
   if (!result.tags || result.tags.length === 0) result.tags = tags;
@@ -743,6 +815,15 @@ async function enrichBookMetadata(isbnOrQuery) {
     result.title,
     result.author
   );
+
+  // Déduction automatique Sous-genre -> Genre principal (ex: Grimdark -> Fantasy)
+  for (const sg of result.fantasy_subgenres) {
+    const parents = SUBGENRE_TO_GENRE[sg] || [];
+    for (const p of parents) {
+      if (!result.genres.includes(p)) result.genres.push(p);
+    }
+  }
+  result.genres = result.genres.slice(0, 4);
 
   const listResults = (gbRes.results && gbRes.results.length > 0)
     ? [result, ...gbRes.results.slice(1)]
@@ -1086,13 +1167,14 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         if (cached && cached.length > 0 && cached[0].payload) {
           try {
             const parsed = JSON.parse(cached[0].payload);
-            if (parsed && parsed.best && parsed.best.title) {
+            if (parsed && parsed.best && parsed.best.title && Array.isArray(parsed.best.genres) && parsed.best.genres.length > 0) {
               return { status: 200, data: { ok: true, best: parsed.best, results: parsed.results || [parsed.best], cached: true } };
             }
           } catch {}
         }
       }
-      const { best, results } = await enrichBookMetadata(q);
+      const googleBooksApiKey = (env && env.GOOGLE_BOOKS_API_KEY) || process.env.GOOGLE_BOOKS_API_KEY || "";
+      const { best, results } = await enrichBookMetadata(q, googleBooksApiKey);
       if (cacheKey && best && best.title) {
         neonQuery(
           connStr,
