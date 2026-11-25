@@ -927,7 +927,13 @@ function renderAddView() {
           ` : ""}
         </div>
         <div id="scanner-slow-hint" style="display:${state.cameraActive && state.cameraSlowHint ? "block" : "none"};margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.35);border-radius:8px;font-size:0.8rem;color:#fde68a;text-align:left;">
-          💡 <b>Astuce :</b> reculez légèrement le livre (15–20 cm), assurez-vous d'avoir un bon éclairage et évitez les reflets sur le code-barres.
+          💡 <b>Astuce :</b> reculez légèrement le livre (15–20 cm), évitez les reflets ou utilisez le bouton <b>Photo</b> ci-dessous.
+        </div>
+        <div style="margin-top:10px;">
+          <input type="file" id="barcode-photo-input" accept="image/*" capture="environment" style="display:none;" onchange="window.handleBarcodePhoto(event)" />
+          <button class="btn" style="width:100%;padding:10px;font-size:0.85rem;border:1px dashed var(--primary-light);color:var(--primary-light);" onclick="document.getElementById('barcode-photo-input').click()">
+            📷 Ou prendre une photo nette du code-barres
+          </button>
         </div>
         ${state.cameraError ? `
           <div style="margin-top:10px;padding:10px 12px;background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.4);border-radius:10px;font-size:0.83rem;color:#fecaca;text-align:left;">
@@ -1287,21 +1293,6 @@ function formatCameraError(err) {
   };
 }
 
-function pickBestRearCamera(cameras) {
-  if (!Array.isArray(cameras) || cameras.length === 0) return null;
-  const isFront = (lbl) => /\b(front|user|selfie|facetime|avant)\b/i.test(lbl);
-  const isSecondaryRear = (lbl) => /\b(ultra|wide|0\.5|macro|tele|telephoto|depth|tof|mono)\b/i.test(lbl);
-  const isRear = (lbl) => /\b(back|rear|environment|arrière|arriere|world)\b/i.test(lbl);
-
-  // Ne force un deviceId que si un label explicite de caméra arrière principale existe ;
-  // sinon on laisse { facingMode: "environment" } choisir.
-  const rearMain = cameras.find((c) => {
-    const lbl = String(c.label || "").trim();
-    return lbl && isRear(lbl) && !isFront(lbl) && !isSecondaryRear(lbl);
-  });
-  return rearMain || null;
-}
-
 window.startBarcodeCamera = async function () {
   isProcessingScan = false;
   state.cameraActive = true;
@@ -1320,79 +1311,27 @@ window.startBarcodeCamera = async function () {
       renderAddView();
       return;
     }
-    const scannerOptions = {
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-    };
-    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
-      scannerOptions.formatsToSupport = [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8
-      ];
-    }
 
-    let cameraTarget = { facingMode: "environment" };
-    let hdTarget = {
-      facingMode: "environment",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      focusMode: { ideal: "continuous" }
-    };
-    try {
-      const cameras = await Html5Qrcode.getCameras();
-      const bestCam = pickBestRearCamera(cameras);
-      if (bestCam && bestCam.id) {
-        cameraTarget = { deviceId: { exact: bestCam.id } };
-        hdTarget = {
-          deviceId: { exact: bestCam.id },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          focusMode: { ideal: "continuous" }
-        };
-      }
-    } catch {}
-
-    const onScanSuccess = async (decodedText) => {
-      if (isProcessingScan) return;
-      const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
-      const isValidIsbn =
-        (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
-        clean.length === 10;
-      if (isValidIsbn) {
-        await window.handleDetectedIsbn(clean);
-      }
-    };
-
-    const baseConfig = {
-      fps: 15,
-      qrbox: (viewfinderWidth, viewfinderHeight) => ({
-        width: Math.max(220, Math.round(viewfinderWidth * 0.82)),
-        height: Math.max(100, Math.round(viewfinderHeight * 0.38))
-      }),
-      aspectRatio: 1.5
-    };
-
-    html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
-    try {
-      await html5QrScanner.start(
-        cameraTarget,
-        {
-          ...baseConfig,
-          videoConstraints: hdTarget
-        },
-        onScanSuccess,
-        () => {}
-      );
-    } catch (hdErr) {
-      // Fallback propre avec nouvelle instance si les contraintes HD/deviceId sont refusées
-      try { await html5QrScanner.clear(); } catch {}
-      html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
-      await html5QrScanner.start(
-        { facingMode: "environment" },
-        baseConfig,
-        onScanSuccess,
-        () => {}
-      );
-    }
+    html5QrScanner = new Html5Qrcode("barcode-scanner-box");
+    await html5QrScanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 15,
+        qrbox: { width: 270, height: 130 },
+        aspectRatio: 1.5
+      },
+      async (decodedText) => {
+        if (isProcessingScan) return;
+        const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+        const isValidIsbn =
+          (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
+          clean.length === 10;
+        if (isValidIsbn) {
+          await window.handleDetectedIsbn(clean);
+        }
+      },
+      () => {}
+    );
 
     cameraSlowTimer = setTimeout(() => {
       if (state.cameraActive && !isProcessingScan) {
@@ -1407,6 +1346,46 @@ window.startBarcodeCamera = async function () {
     if (cameraSlowTimer) clearTimeout(cameraSlowTimer);
     state.cameraError = formatCameraError(err);
     renderAddView();
+  }
+};
+
+window.handleBarcodePhoto = async function (event) {
+  const file = event && event.target && event.target.files && event.target.files[0];
+  if (!file) return;
+  state.cameraError = null;
+  if (state.cameraActive) {
+    await window.stopBarcodeCamera();
+  }
+  setSyncStatus(true, "Lecture photo...");
+  try {
+    const fileScanner = new Html5Qrcode("barcode-scanner-box");
+    const decodedText = await fileScanner.scanFile(file, false);
+    try { await fileScanner.clear(); } catch {}
+    const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+    const isValidIsbn =
+      (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
+      clean.length === 10;
+    if (isValidIsbn) {
+      await window.handleDetectedIsbn(clean);
+    } else {
+      setSyncStatus(false, "Prêt");
+      state.cameraError = {
+        title: "Code détecté mais ce n'est pas un ISBN de livre",
+        hint: `Code lu : ${decodedText || "inconnu"}. Assurez-vous de photographier le code-barres commençant par 978 ou 979.`,
+        tech: ""
+      };
+      renderAddView();
+    }
+  } catch (err) {
+    setSyncStatus(false, "Prêt");
+    state.cameraError = {
+      title: "Code-barres non détecté sur la photo",
+      hint: "Prenez la photo de plus près, bien droite et nette sur le code-barres ISBN (sans reflet), ou utilisez la recherche par titre.",
+      tech: (err && err.message) || String(err || "")
+    };
+    renderAddView();
+  } finally {
+    if (event && event.target) event.target.value = "";
   }
 };
 
