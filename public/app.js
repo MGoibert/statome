@@ -743,10 +743,10 @@ document.addEventListener("visibilitychange", () => {
 // ==========================================
 // 2. VUE BIBLIOTHÈQUE
 // ==========================================
-function renderLibraryView() {
-  const el = document.getElementById("view-library");
+function renderLibraryResultsOnly() {
+  const resultsEl = document.getElementById("lib-results-box");
+  if (!resultsEl) return;
   const curMonth = new Date().toISOString().slice(0, 7);
-  const pills = ["Tous", "En cours", "À lire", "PAL du mois", "Terminé", "Wishlist", "À acheter", "DNF"];
 
   let filtered = state.books.filter((b) => {
     if (state.libFilter === "En cours") return b.status === "En cours";
@@ -819,12 +819,39 @@ function renderLibraryView() {
     })
     .join("");
 
-  el.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:10px;">
-      <input type="search" placeholder="🔍 Titre, auteur, saga, sous-genre..." value="${escapeHtml(state.libSearch)}" oninput="window.setLibSearch(this.value)" />
-      <button class="btn" style="padding:10px 12px;flex-shrink:0;" onclick="window.toggleLibAdv()">⚙️ Filtres</button>
+  resultsEl.innerHTML = `
+    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;"><b>${filtered.length}</b> livre(s)</div>
+    <div class="lib-grid">
+      ${cardsHtml || `<div style="text-align:center;color:var(--muted);padding:30px;">Aucun livre ne correspond à vos filtres.</div>`}
     </div>
-    ${state.libAdvOpen ? `
+  `;
+}
+
+function renderLibraryView() {
+  const el = document.getElementById("view-library");
+  const pills = ["Tous", "En cours", "À lire", "PAL du mois", "Terminé", "Wishlist", "À acheter", "DNF"];
+
+  // Monte le squelette de recherche une seule fois pour ne JAMAIS détruire l'<input> ni fermer le clavier mobile !
+  if (!document.getElementById("lib-search-input")) {
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <input type="search" id="lib-search-input" placeholder="🔍 Titre, auteur, saga, sous-genre..." value="${escapeHtml(state.libSearch)}" oninput="window.setLibSearch(this.value)" />
+        <button class="btn" style="padding:10px 12px;flex-shrink:0;" onclick="window.toggleLibAdv()">⚙️ Filtres</button>
+      </div>
+      <div id="lib-adv-box"></div>
+      <div id="lib-pills-box" class="pills-row"></div>
+      <div id="lib-results-box"></div>
+    `;
+  } else {
+    const searchInput = document.getElementById("lib-search-input");
+    if (searchInput && document.activeElement !== searchInput && searchInput.value !== state.libSearch) {
+      searchInput.value = state.libSearch;
+    }
+  }
+
+  const advEl = document.getElementById("lib-adv-box");
+  if (advEl) {
+    advEl.innerHTML = state.libAdvOpen ? `
       <div class="card" style="padding:12px;margin-bottom:10px;">
         <label style="margin-top:0;">✨ Filtrer par Sous-genre</label>
         <select onchange="window.setLibSubgenre(this.value)">
@@ -832,20 +859,20 @@ function renderLibraryView() {
           ${ALL_SUBGENRES.map((s) => `<option value="${escapeHtml(s)}" ${state.libSubgenre === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
         </select>
       </div>
-    ` : ""}
-    <div class="pills-row">
-      ${pills
-        .map(
-          (p) =>
-            `<button class="pill ${state.libFilter === p ? "active" : ""}" onclick="window.setLibFilter('${p}')">${p}</button>`
-        )
-        .join("")}
-    </div>
-    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;"><b>${filtered.length}</b> livre(s)</div>
-    <div class="lib-grid">
-      ${cardsHtml || `<div style="text-align:center;color:var(--muted);padding:30px;">Aucun livre ne correspond à vos filtres.</div>`}
-    </div>
-  `;
+    ` : "";
+  }
+
+  const pillsEl = document.getElementById("lib-pills-box");
+  if (pillsEl) {
+    pillsEl.innerHTML = pills
+      .map(
+        (p) =>
+          `<button class="pill ${state.libFilter === p ? "active" : ""}" onclick="window.setLibFilter('${p}')">${p}</button>`
+      )
+      .join("");
+  }
+
+  renderLibraryResultsOnly();
 }
 
 window.setLibFilter = function (f) {
@@ -855,7 +882,7 @@ window.setLibFilter = function (f) {
 
 window.setLibSearch = function (q) {
   state.libSearch = q;
-  renderLibraryView();
+  renderLibraryResultsOnly();
 };
 
 window.toggleLibAdv = function () {
