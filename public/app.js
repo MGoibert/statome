@@ -1217,6 +1217,25 @@ window.handleDetectedIsbn = async function (clean) {
   }
 };
 
+function pickBestRearCamera(cameras) {
+  if (!Array.isArray(cameras) || cameras.length === 0) return null;
+  const isFront = (lbl) => /\b(front|user|selfie|facetime|avant)\b/i.test(lbl);
+  const isSecondaryRear = (lbl) => /\b(ultra|wide|0\.5|macro|tele|telephoto|depth|tof|mono)\b/i.test(lbl);
+  const isRear = (lbl) => /\b(back|rear|environment|arrière|arriere|world)\b/i.test(lbl);
+
+  const rearMain = cameras.find((c) => {
+    const lbl = String(c.label || "");
+    return isRear(lbl) && !isFront(lbl) && !isSecondaryRear(lbl);
+  });
+  if (rearMain) return rearMain;
+
+  const anyRear = cameras.find((c) => {
+    const lbl = String(c.label || "");
+    return !isFront(lbl) && !isSecondaryRear(lbl);
+  });
+  return anyRear || cameras.find((c) => !isFront(String(c.label || ""))) || cameras[0];
+}
+
 window.startBarcodeCamera = async function () {
   isProcessingScan = false;
   state.cameraActive = true;
@@ -1229,7 +1248,8 @@ window.startBarcodeCamera = async function () {
       return;
     }
     const scannerOptions = {
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+      // Moteur ZXing universel : évite les bugs de BarcodeDetector sur certains Android / WebViews (ex: WhatsApp)
+      experimentalFeatures: { useBarCodeDetectorIfSupported: false }
     };
     if (typeof Html5QrcodeSupportedFormats !== "undefined") {
       scannerOptions.formatsToSupport = [
@@ -1238,7 +1258,26 @@ window.startBarcodeCamera = async function () {
       ];
     }
 
-    html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
+    let cameraTarget = { facingMode: "environment" };
+    let hdTarget = {
+      facingMode: "environment",
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      focusMode: { ideal: "continuous" }
+    };
+    try {
+      const cameras = await Html5Qrcode.getCameras();
+      const bestCam = pickBestRearCamera(cameras);
+      if (bestCam && bestCam.id) {
+        cameraTarget = { deviceId: { exact: bestCam.id } };
+        hdTarget = {
+          deviceId: { exact: bestCam.id },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          focusMode: { ideal: "continuous" }
+        };
+      }
+    } catch {}
 
     const onScanSuccess = async (decodedText) => {
       if (isProcessingScan) return;
@@ -1260,23 +1299,21 @@ window.startBarcodeCamera = async function () {
       aspectRatio: 1.5
     };
 
+    html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
     try {
       await html5QrScanner.start(
-        { facingMode: "environment" },
+        cameraTarget,
         {
           ...baseConfig,
-          videoConstraints: {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            focusMode: { ideal: "continuous" }
-          }
+          videoConstraints: hdTarget
         },
         onScanSuccess,
         () => {}
       );
     } catch (hdErr) {
-      // Fallback si le navigateur/téléphone refuse les contraintes HD/autofocus
+      // Fallback propre avec nouvelle instance si les contraintes HD/deviceId sont refusées
+      try { await html5QrScanner.clear(); } catch {}
+      html5QrScanner = new Html5Qrcode("barcode-scanner-box", scannerOptions);
       await html5QrScanner.start(
         { facingMode: "environment" },
         baseConfig,
