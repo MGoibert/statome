@@ -1293,17 +1293,13 @@ function pickBestRearCamera(cameras) {
   const isSecondaryRear = (lbl) => /\b(ultra|wide|0\.5|macro|tele|telephoto|depth|tof|mono)\b/i.test(lbl);
   const isRear = (lbl) => /\b(back|rear|environment|arrière|arriere|world)\b/i.test(lbl);
 
+  // Ne force un deviceId que si un label explicite de caméra arrière principale existe ;
+  // sinon on laisse { facingMode: "environment" } choisir.
   const rearMain = cameras.find((c) => {
-    const lbl = String(c.label || "");
-    return isRear(lbl) && !isFront(lbl) && !isSecondaryRear(lbl);
+    const lbl = String(c.label || "").trim();
+    return lbl && isRear(lbl) && !isFront(lbl) && !isSecondaryRear(lbl);
   });
-  if (rearMain) return rearMain;
-
-  const anyRear = cameras.find((c) => {
-    const lbl = String(c.label || "");
-    return !isFront(lbl) && !isSecondaryRear(lbl);
-  });
-  return anyRear || cameras.find((c) => !isFront(String(c.label || ""))) || cameras[0];
+  return rearMain || null;
 }
 
 window.startBarcodeCamera = async function () {
@@ -1325,8 +1321,7 @@ window.startBarcodeCamera = async function () {
       return;
     }
     const scannerOptions = {
-      // Moteur ZXing universel : évite les bugs de BarcodeDetector sur certains Android / WebViews (ex: WhatsApp)
-      experimentalFeatures: { useBarCodeDetectorIfSupported: false }
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     };
     if (typeof Html5QrcodeSupportedFormats !== "undefined") {
       scannerOptions.formatsToSupport = [
