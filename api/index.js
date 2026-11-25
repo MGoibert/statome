@@ -413,48 +413,80 @@ const SUBGENRE_TO_GENRE = {
   "Sciences & Nature": ["Non-Fiction & Essais"]
 };
 
+function mapSingleShelfToGenre(s, allNormShelves = []) {
+  const matchAny = (list) => list.some((kw) => s === kw || hasKeyword(s, kw));
+
+  if (matchAny(["manga", "mangas", "comics", "graphic novels", "graphic novel", "bande dessinée", "bandes dessinées", "shonen", "seinen", "shojo", "josei", "webtoon", "manhwa", "comic book"])) {
+    return "Manga, BD & Graphique";
+  }
+  if (matchAny(["fantasy", "romantasy", "high fantasy", "epic fantasy", "urban fantasy", "dark fantasy", "grimdark", "cozy fantasy", "fae", "magic", "dragons", "witches", "mythology", "fairy tales"])) {
+    return "Fantasy";
+  }
+  if (matchAny(["science fiction", "sci-fi", "sci fi", "dystopia", "dystopian", "space opera", "cyberpunk", "post apocalyptic", "post-apocalyptic", "time travel", "steampunk", "hard science fiction", "aliens"])) {
+    return "Science-Fiction";
+  }
+  if (matchAny(["thriller", "mystery", "crime", "mystery thriller", "psychological thriller", "detective", "suspense", "noir", "cozy mystery", "espionage", "policier", "polar", "whodunit"])) {
+    return "Thriller / Polar";
+  }
+  if (matchAny(["contemporary romance", "historical romance", "dark romance", "paranormal romance", "new adult", "chick lit", "romantic comedy", "rom-com", "sports romance"])) {
+    return "Romance";
+  }
+  if (s === "romance") {
+    // Si "Fiction" / "Roman" est arrivé avant "Romance" et qu'il y a "Book Club" / "French Literature" sans sous-genre romance dédié, c'est plutôt Littérature & Contemporain
+    const romIdx = allNormShelves.indexOf("romance");
+    const ficIdx = allNormShelves.findIndex((x) => x === "fiction" || x === "roman");
+    const hasLitMarkers = allNormShelves.some((x) => ["french literature", "book club", "literary fiction", "classics"].includes(x));
+    const hasDedicatedRom = allNormShelves.some((x) => ["contemporary romance", "dark romance", "historical romance", "new adult", "sports romance", "romantasy"].includes(x));
+    if (ficIdx >= 0 && ficIdx < romIdx && hasLitMarkers && !hasDedicatedRom) {
+      return "Littérature & Contemporain";
+    }
+    return "Romance";
+  }
+  if (matchAny(["historical fiction", "roman historique", "world war ii", "ancient history", "medieval"])) {
+    return "Historique";
+  }
+  if (matchAny(["horror", "horreur", "épouvante", "gothic", "ghosts", "vampires", "supernatural", "occult", "paranormal", "zombies", "werewolves", "lovecraftian"])) {
+    return "Horreur & Fantastique";
+  }
+  if (matchAny(["nonfiction", "non-fiction", "biography", "memoir", "autobiography", "self help", "self-help", "personal development", "psychology", "philosophy", "business", "economics", "sociology", "politics", "essays", "popular science", "true crime", "essai", "biographie"])) {
+    return "Non-Fiction & Essais";
+  }
+  if (matchAny(["contemporary", "contemporary fiction", "literary fiction", "classics", "classic", "poetry", "plays", "short stories", "womens fiction"])) {
+    return "Littérature & Contemporain";
+  }
+  return null;
+}
+
 function mapOfficialShelvesToGenres(shelves = []) {
   const normShelves = shelves.map((s) => String(s || "").trim().toLowerCase()).filter(Boolean);
-  const genres = [];
-  const addG = (g) => { if (!genres.includes(g)) genres.push(g); };
+  if (normShelves.length === 0) return [];
 
   const hasAny = (list) => normShelves.some((s) => list.some((kw) => s === kw || hasKeyword(s, kw)));
 
-  if (hasAny(["fantasy", "romantasy", "high fantasy", "epic fantasy", "urban fantasy", "dark fantasy", "grimdark", "cozy fantasy", "fae", "magic", "dragons", "witches", "mythology", "fairy tales"])) {
-    addG("Fantasy");
-  }
-  if (hasAny(["science fiction", "sci-fi", "sci fi", "dystopia", "dystopian", "space opera", "cyberpunk", "post apocalyptic", "post-apocalyptic", "time travel", "steampunk", "hard science fiction", "aliens"])) {
-    addG("Science-Fiction");
-  }
-  if (hasAny(["thriller", "mystery", "crime", "mystery thriller", "psychological thriller", "detective", "suspense", "noir", "cozy mystery", "espionage", "true crime", "policier", "polar", "whodunit"])) {
-    addG("Thriller / Polar");
-  }
-  if (hasAny(["romance", "contemporary romance", "historical romance", "dark romance", "romantasy", "paranormal romance", "new adult", "chick lit", "romantic comedy", "rom-com", "sports romance", "love"])) {
-    addG("Romance");
-  }
-  if (hasAny(["historical fiction", "roman historique", "historical romance", "regency", "world war ii", "ancient history", "medieval"]) ||
-      (hasAny(["historical", "history"]) && !genres.includes("Fantasy") && !genres.includes("Science-Fiction"))) {
-    addG("Historique");
-  }
-  if (hasAny(["horror", "horreur", "épouvante", "gothic", "ghosts", "vampires", "supernatural", "occult", "paranormal", "zombies", "werewolves", "lovecraftian"]) && !genres.includes("Fantasy")) {
-    addG("Horreur & Fantastique");
-  }
+  // 1. Priorité absolue au format Manga / BD / Comics / Webtoon
   if (hasAny(["manga", "mangas", "comics", "graphic novels", "graphic novel", "bande dessinée", "bandes dessinées", "shonen", "seinen", "shojo", "josei", "webtoon", "manhwa", "comic book"])) {
-    addG("Manga, BD & Graphique");
-  }
-  if (hasAny(["nonfiction", "non-fiction", "biography", "memoir", "autobiography", "self help", "self-help", "personal development", "psychology", "philosophy", "business", "economics", "sociology", "politics", "essays", "popular science", "true crime", "essai", "biographie"])) {
-    addG("Non-Fiction & Essais");
-  }
-  if (hasAny(["contemporary", "contemporary fiction", "literary fiction", "classics", "classic", "poetry", "plays", "short stories", "womens fiction", "family"])) {
-    addG("Littérature & Contemporain");
-  }
-  // Si les sources officielles indiquent explicitement "Fiction" / "Roman" / "Novels" / "French Literature" / "Book Club"
-  // et qu'aucun genre de l'Imaginaire / Polar / BD / Non-Fiction n'est présent, c'est de la Littérature générale / Contemporain.
-  if (genres.length === 0 && hasAny(["fiction", "roman", "novels", "novel", "literature", "french literature", "book club", "general fiction", "drama"])) {
-    addG("Littérature & Contemporain");
+    return ["Manga, BD & Graphique"];
   }
 
-  return genres;
+  // 2. Priorité absolue à la Non-Fiction quand "Nonfiction" / "Biography" / "Essai" est présent sans être un roman ("Fiction"/"Roman" absent ou secondaire)
+  const nonFicIdx = normShelves.findIndex((s) => ["nonfiction", "non-fiction", "biography", "memoir", "autobiography", "self help", "self-help", "essai", "essais", "biographie"].some((kw) => s === kw || hasKeyword(s, kw)));
+  const ficIdx = normShelves.findIndex((s) => s === "fiction" || s === "roman" || s === "novels");
+  if (nonFicIdx >= 0 && (ficIdx === -1 || nonFicIdx < ficIdx)) {
+    return ["Non-Fiction & Essais"];
+  }
+
+  // 3. Pour les romans : on parcourt les shelves dans l'ordre exact des votes pour retenir LE genre principal dominant
+  for (const s of normShelves) {
+    const mapped = mapSingleShelfToGenre(s, normShelves);
+    if (mapped) return [mapped];
+  }
+
+  // 4. Si seules des étiquettes génériques de roman ("Fiction", "Roman", "Novels", "Literature") sont présentes
+  if (hasAny(["fiction", "roman", "novels", "novel", "literature", "french literature", "book club", "general fiction", "drama"])) {
+    return ["Littérature & Contemporain"];
+  }
+
+  return [];
 }
 
 async function fetchBnfAuthorCountry(authorRecordId) {
@@ -989,28 +1021,39 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
   const textBlob = `${result.title} ${origTitle} ${result.series_name} ${allCategoriesText} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.description) || ""} ${gbFallbackDesc}`;
 
   const { genres: kwGenres, tags } = inferGenresAndTags(textBlob, result.publisher);
-  const mergedGenres = [...officialGenres];
-  for (const g of kwGenres) {
-    if (!mergedGenres.includes(g)) mergedGenres.push(g);
-  }
-  result.genres = mergedGenres;
   if (!result.tags || result.tags.length === 0) result.tags = tags;
 
-  result.fantasy_subgenres = inferFantasySubgenres(
+  const rawSubgenres = inferFantasySubgenres(
     `${textBlob} ${result.tags.join(" ")}`,
     result.publisher,
     `${result.title} ${origTitle}`,
     result.author
   );
 
-  // Déduction automatique Sous-genre -> Genre principal (ex: Grimdark -> Fantasy)
-  for (const sg of result.fantasy_subgenres) {
-    const parents = SUBGENRE_TO_GENRE[sg] || [];
-    for (const p of parents) {
-      if (!result.genres.includes(p)) result.genres.push(p);
-    }
+  // Détermination d'UN SEUL genre principal propre (priorité : Manga/BD > Non-Fiction > 1er genre officiel voté > mots-clés > sous-genre)
+  let primaryGenre = "";
+  if (officialGenres.length > 0) {
+    primaryGenre = officialGenres[0];
+  } else if (kwGenres.includes("Manga, BD & Graphique")) {
+    primaryGenre = "Manga, BD & Graphique";
+  } else if (kwGenres.includes("Non-Fiction & Essais") && kwGenres.length === 1) {
+    primaryGenre = "Non-Fiction & Essais";
+  } else if (kwGenres.length > 0) {
+    primaryGenre = kwGenres[0];
+  } else if (rawSubgenres.length > 0) {
+    const parents = SUBGENRE_TO_GENRE[rawSubgenres[0]] || [];
+    if (parents[0]) primaryGenre = parents[0];
   }
-  result.genres = result.genres.slice(0, 4);
+
+  result.genres = primaryGenre ? [primaryGenre] : [];
+
+  // Filtre les sous-genres pour ne garder que ceux cohérents avec le genre principal retenu
+  result.fantasy_subgenres = primaryGenre
+    ? rawSubgenres.filter((sg) => {
+        const parents = SUBGENRE_TO_GENRE[sg] || [];
+        return parents.length === 0 || parents.includes(primaryGenre);
+      }).slice(0, 3)
+    : rawSubgenres.slice(0, 3);
 
   const listResults = (gbRes.results && gbRes.results.length > 0)
     ? [result, ...gbRes.results.slice(1)]
