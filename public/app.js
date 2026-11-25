@@ -182,6 +182,7 @@ let state = {
   // Add Book state (Camera by default!)
   addMode: "camera", // "camera" | "search"
   cameraActive: false,
+  cameraZoom: 1,
   cameraError: null, // { title, hint, tech }
   cameraSlowHint: false,
   lastScannedCode: "",
@@ -926,8 +927,16 @@ function renderAddView() {
             </div>
           ` : ""}
         </div>
+        ${state.cameraActive ? `
+          <div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:8px;">
+            <span style="font-size:0.78rem;color:var(--muted);">🔍 Zoom (si flou de près, reculez à 20 cm en 2x) :</span>
+            ${[1, 1.5, 2].map((z) => `
+              <button class="btn cam-zoom-btn ${state.cameraZoom === z ? "btn-primary" : ""}" data-zoom="${z}" style="padding:4px 10px;font-size:0.78rem;" onclick="window.setCameraZoom(${z})">${z}x</button>
+            `).join("")}
+          </div>
+        ` : ""}
         <div id="scanner-slow-hint" style="display:${state.cameraActive && state.cameraSlowHint ? "block" : "none"};margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.35);border-radius:8px;font-size:0.8rem;color:#fde68a;text-align:left;">
-          💡 <b>Astuce :</b> reculez légèrement le livre (15–20 cm), évitez les reflets ou utilisez le bouton <b>Photo</b> ci-dessous.
+          💡 <b>Astuce :</b> passez en zoom <b>2x</b> en tenant le livre à 20 cm (pour une mise au point nette), ou utilisez le bouton <b>Photo</b> ci-dessous.
         </div>
         <div style="margin-top:10px;">
           <input type="file" id="barcode-photo-input" accept="image/*" capture="environment" style="display:none;" onchange="window.handleBarcodePhoto(event)" />
@@ -1244,6 +1253,66 @@ window.handleDetectedIsbn = async function (clean) {
 };
 
 let cameraSlowTimer = null;
+let zbarLiveInterval = null;
+let cachedZbarDetector = null;
+
+async function getZbarOrNativeDetector() {
+  if (cachedZbarDetector) return cachedZbarDetector;
+  try {
+    if (typeof barcodeDetectorPolyfill !== "undefined" && barcodeDetectorPolyfill.BarcodeDetectorPolyfill) {
+      if (typeof window.BarcodeDetector === "undefined") {
+        window.BarcodeDetector = barcodeDetectorPolyfill.BarcodeDetectorPolyfill;
+      }
+      cachedZbarDetector = new barcodeDetectorPolyfill.BarcodeDetectorPolyfill({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e"]
+      });
+      return cachedZbarDetector;
+    }
+    if (typeof window.BarcodeDetector !== "undefined") {
+      cachedZbarDetector = new window.BarcodeDetector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e"]
+      });
+      return cachedZbarDetector;
+    }
+  } catch {}
+  return null;
+}
+
+function extractValidIsbn(raw) {
+  const digits = String(raw || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+  if (digits.length === 13 && (digits.startsWith("978") || digits.startsWith("979"))) return digits;
+  if (digits.length === 10) return digits;
+  const m13 = digits.match(/(97[89]\d{10})/);
+  if (m13) return m13[1];
+  return null;
+}
+
+window.setCameraZoom = async function (z) {
+  state.cameraZoom = Number(z) || 1;
+  document.querySelectorAll(".cam-zoom-btn").forEach((btn) => {
+    const bz = Number(btn.getAttribute("data-zoom"));
+    btn.classList.toggle("btn-primary", bz === state.cameraZoom);
+  });
+  const box = document.getElementById("barcode-scanner-box");
+  const video = box ? box.querySelector("video") : null;
+  if (!video) return;
+  let hwZoomApplied = false;
+  try {
+    const stream = video.srcObject;
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if (track && track.getCapabilities) {
+      const caps = track.getCapabilities();
+      if (caps && caps.zoom) {
+        const targetZoom = Math.min(caps.zoom.max || state.cameraZoom, Math.max(caps.zoom.min || 1, state.cameraZoom));
+        await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+        hwZoomApplied = true;
+      }
+    }
+  } catch {}
+  video.style.transition = "transform 0.2s ease";
+  video.style.transformOrigin = "center center";
+  video.style.transform = hwZoomApplied ? "scale(1)" : `scale(${state.cameraZoom})`;
+};
 
 function formatCameraError(err) {
   const ua = navigator.userAgent || "";
@@ -1296,11 +1365,14 @@ function formatCameraError(err) {
 window.startBarcodeCamera = async function () {
   isProcessingScan = false;
   state.cameraActive = true;
+  state.cameraZoom = 1;
   state.cameraError = null;
   state.cameraSlowHint = false;
   if (cameraSlowTimer) clearTimeout(cameraSlowTimer);
+  if (zbarLiveInterval) clearInterval(zbarLiveInterval);
   renderAddView();
   try {
+    await getZbarOrNativeDetector();
     if (typeof Html5Qrcode === "undefined") {
       state.cameraActive = false;
       state.cameraError = {
@@ -1322,16 +1394,58 @@ window.startBarcodeCamera = async function () {
       },
       async (decodedText) => {
         if (isProcessingScan) return;
-        const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
-        const isValidIsbn =
-          (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
-          clean.length === 10;
-        if (isValidIsbn) {
+        const clean = extractValidIsbn(decodedText);
+        if (clean) {
           await window.handleDetectedIsbn(clean);
         }
       },
       () => {}
     );
+
+    // Boucle ZBar WebAssembly parallèle sur le flux <video> plein cadre + crop central (sans downscaling 270px)
+    const cropCanvas = document.createElement("canvas");
+    const cropCtx = cropCanvas.getContext("2d", { willReadFrequently: true });
+    let zbarBusy = false;
+    zbarLiveInterval = setInterval(async () => {
+      if (!state.cameraActive || isProcessingScan || zbarBusy) return;
+      const detector = await getZbarOrNativeDetector();
+      if (!detector) return;
+      const box = document.getElementById("barcode-scanner-box");
+      const video = box ? box.querySelector("video") : null;
+      if (!video || !video.videoWidth || !video.videoHeight || video.readyState < 2) return;
+      zbarBusy = true;
+      try {
+        // 1. Détection directe plein cadre sur la vidéo
+        const fullHits = await detector.detect(video).catch(() => []);
+        for (const h of fullHits || []) {
+          const clean = extractValidIsbn(h.rawValue);
+          if (clean) {
+            await window.handleDetectedIsbn(clean);
+            return;
+          }
+        }
+        // 2. Détection sur crop central zoomé (idéal quand le téléphone est tenu à 20-25 cm)
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        const cw = Math.round(vw * 0.7);
+        const ch = Math.round(vh * 0.45);
+        const sx = Math.round((vw - cw) / 2);
+        const sy = Math.round((vh - ch) / 2);
+        cropCanvas.width = 720;
+        cropCanvas.height = Math.max(240, Math.round((720 * ch) / cw));
+        cropCtx.drawImage(video, sx, sy, cw, ch, 0, 0, cropCanvas.width, cropCanvas.height);
+        const cropHits = await detector.detect(cropCanvas).catch(() => []);
+        for (const h of cropHits || []) {
+          const clean = extractValidIsbn(h.rawValue);
+          if (clean) {
+            await window.handleDetectedIsbn(clean);
+            return;
+          }
+        }
+      } catch {} finally {
+        zbarBusy = false;
+      }
+    }, 200);
 
     cameraSlowTimer = setTimeout(() => {
       if (state.cameraActive && !isProcessingScan) {
@@ -1344,10 +1458,77 @@ window.startBarcodeCamera = async function () {
     state.cameraActive = false;
     state.cameraSlowHint = false;
     if (cameraSlowTimer) clearTimeout(cameraSlowTimer);
+    if (zbarLiveInterval) clearInterval(zbarLiveInterval);
     state.cameraError = formatCameraError(err);
     renderAddView();
   }
 };
+
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
+}
+
+function buildPhotoCandidateCanvases(img) {
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  const specs = [
+    { crop: 1.0, maxDim: 1400, rot: 0, contrast: false },
+    { crop: 0.65, maxDim: 1200, rot: 0, contrast: false },
+    { crop: 0.45, maxDim: 1000, rot: 0, contrast: true },
+    { crop: 1.0, maxDim: 1200, rot: 90, contrast: false },
+    { crop: 0.65, maxDim: 1200, rot: 90, contrast: true },
+    { crop: 1.0, maxDim: 900, rot: 0, contrast: true }
+  ];
+  const canvases = [];
+  for (const sp of specs) {
+    const sw = Math.round(iw * sp.crop);
+    const sh = Math.round(ih * sp.crop);
+    const sx = Math.round((iw - sw) / 2);
+    const sy = Math.round((ih - sh) / 2);
+    const scale = Math.min(1, sp.maxDim / Math.max(sw, sh));
+    const dw = Math.max(120, Math.round(sw * scale));
+    const dh = Math.max(120, Math.round(sh * scale));
+
+    const c = document.createElement("canvas");
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (sp.rot === 90) {
+      c.width = dh;
+      c.height = dw;
+      if (sp.contrast) ctx.filter = " grayscale(1) contrast(1.5)";
+      ctx.translate(c.width / 2, c.height / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(img, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
+    } else {
+      c.width = dw;
+      c.height = dh;
+      if (sp.contrast) ctx.filter = "grayscale(1) contrast(1.5)";
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+    }
+    canvases.push(c);
+  }
+  return canvases;
+}
+
+function canvasToFile(canvas, name = "crop.jpg") {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) return resolve(null);
+      resolve(new File([blob], name, { type: "image/jpeg" }));
+    }, "image/jpeg", 0.92);
+  });
+}
 
 window.handleBarcodePhoto = async function (event) {
   const file = event && event.target && event.target.files && event.target.files[0];
@@ -1358,29 +1539,69 @@ window.handleBarcodePhoto = async function (event) {
   }
   setSyncStatus(true, "Lecture photo...");
   try {
-    const fileScanner = new Html5Qrcode("barcode-scanner-box");
-    const decodedText = await fileScanner.scanFile(file, false);
-    try { await fileScanner.clear(); } catch {}
-    const clean = String(decodedText || "").replace(/[^0-9Xx]/g, "").toUpperCase();
-    const isValidIsbn =
-      (clean.length === 13 && (clean.startsWith("978") || clean.startsWith("979"))) ||
-      clean.length === 10;
-    if (isValidIsbn) {
-      await window.handleDetectedIsbn(clean);
-    } else {
+    const img = await loadImageElement(file);
+    const candidates = buildPhotoCandidateCanvases(img);
+    const detector = await getZbarOrNativeDetector();
+    let foundIsbn = null;
+    let lastRawCode = "";
+
+    // 1. Décodage ultra-rapide via ZBar WebAssembly / BarcodeDetector sur chaque vue redimensionnée/recadrée/tournée
+    if (detector) {
+      for (const c of candidates) {
+        const hits = await detector.detect(c).catch(() => []);
+        for (const h of hits || []) {
+          if (h && h.rawValue) {
+            lastRawCode = h.rawValue;
+            const clean = extractValidIsbn(h.rawValue);
+            if (clean) {
+              foundIsbn = clean;
+              break;
+            }
+          }
+        }
+        if (foundIsbn) break;
+      }
+    }
+
+    // 2. Fallback ZXing sur les vues redimensionnées (évite l'échec sur les photos brutes 12MP)
+    if (!foundIsbn && typeof Html5Qrcode !== "undefined") {
+      const fileScanner = new Html5Qrcode("barcode-scanner-box");
+      for (let i = 0; i < Math.min(3, candidates.length); i++) {
+        const subFile = await canvasToFile(candidates[i], `scan_${i}.jpg`);
+        if (!subFile) continue;
+        try {
+          const decodedText = await fileScanner.scanFile(subFile, false);
+          if (decodedText) {
+            lastRawCode = decodedText;
+            const clean = extractValidIsbn(decodedText);
+            if (clean) {
+              foundIsbn = clean;
+              break;
+            }
+          }
+        } catch {}
+      }
+      try { await fileScanner.clear(); } catch {}
+    }
+
+    if (foundIsbn) {
+      await window.handleDetectedIsbn(foundIsbn);
+    } else if (lastRawCode) {
       setSyncStatus(false, "Prêt");
       state.cameraError = {
         title: "Code détecté mais ce n'est pas un ISBN de livre",
-        hint: `Code lu : ${decodedText || "inconnu"}. Assurez-vous de photographier le code-barres commençant par 978 ou 979.`,
+        hint: `Code lu : ${lastRawCode}. Photographiez bien le code-barres commençant par 978 ou 979.`,
         tech: ""
       };
       renderAddView();
+    } else {
+      throw new Error("Aucun code ISBN-13 lisible trouvé sur la photo (testé en multi-échelles + rotation 90°).");
     }
   } catch (err) {
     setSyncStatus(false, "Prêt");
     state.cameraError = {
       title: "Code-barres non détecté sur la photo",
-      hint: "Prenez la photo de plus près, bien droite et nette sur le code-barres ISBN (sans reflet), ou utilisez la recherche par titre.",
+      hint: "Prenez la photo à environ 15–20 cm pour qu'elle soit bien nette et sans reflet sur les barres, ou utilisez la recherche par titre.",
       tech: (err && err.message) || String(err || "")
     };
     renderAddView();
@@ -1395,6 +1616,10 @@ window.stopBarcodeCamera = async function () {
   if (cameraSlowTimer) {
     clearTimeout(cameraSlowTimer);
     cameraSlowTimer = null;
+  }
+  if (zbarLiveInterval) {
+    clearInterval(zbarLiveInterval);
+    zbarLiveInterval = null;
   }
   if (html5QrScanner) {
     try {
