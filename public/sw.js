@@ -1,5 +1,5 @@
-const CACHE_NAME = "statome-pwa-v16";
-const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=16", "/app.js?v=16", "/html5-qrcode.min.js?v=16", "/manifest.json"];
+const CACHE_NAME = "statome-pwa-v17";
+const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=17", "/app.js?v=17", "/zbar-wasm.js?v=17", "/zbar.wasm", "/html5-qrcode.min.js?v=17", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -19,7 +19,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith("/api")) {
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api")) {
     return;
   }
   event.respondWith(

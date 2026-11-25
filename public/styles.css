@@ -533,6 +533,15 @@ label {
 
 #barcode-scanner-box {
   width: 100%;
+  display: none;
+}
+
+#live-barcode-video {
+  width: 100%;
+  height: 260px;
+  object-fit: cover;
+  display: block;
+  background: #000;
 }
 
 .scanner-overlay {
