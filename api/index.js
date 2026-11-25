@@ -268,57 +268,84 @@ function inferGenresAndTags(text, publisher = "") {
 
 function inferFantasySubgenres(text = "", publisher = "", title = "", author = "") {
   const combined = `${title} ${author} ${publisher} ${text}`.toLowerCase();
+  const isManga = ["manga", "mangas", "shonen", "shōnen", "seinen", "shojo", "shōjo", "josei"].some((kw) => hasKeyword(combined, kw));
+  const isNonFiction = ["nonfiction", "non-fiction", "essai", "essais", "biographie", "biography", "memoir"].some((kw) => hasKeyword(combined, kw));
   const rules = [
     // Fantasy
     [["litrpg", "progression fantasy", "cultivation", "dungeon", "donjon", "will wight"], "Progression Fantasy / LitRPG"],
-    [["romantasy", "romantic fantasy", "fourth wing", "yarros", "acotar", "sarah j. maas", "fae", "enemies to lovers"], "Romantasy / Romantic Fantasy"],
+    [["romantasy", "romantic fantasy", "fantasy romance", "fourth wing", "yarros", "acotar", "sarah j. maas", "enemies to lovers"], "Romantasy / Romantic Fantasy"],
     [["flintlock", "powder mage", "mousquet", "mousquetaire", "lames du cardinal", "pierre pevel", "1633"], "Flintlock Fantasy / Militaire"],
     [["grimdark", "poppy war", "kuang", "abercrombie", "john gwynne", "malice", "guerre sanglante"], "Grimdark"],
     [["cozy fantasy", "cosy fantasy", "slice of life", "tranche de vie", "travis baldree", "rewitched", "lucy jane wood", "salon de thé"], "Cozy Fantasy / Tranche de vie"],
-    [["retelling", "réécriture", "conte", "fairy tale"], "Contes & Réécritures (Retellings)"],
-    [["uchronie", "alternate history", "naomi novik", "susanna clarke", "voyage temporel", "time travel"], "Uchronie / Histoire Alternative"],
+    [["retelling", "retellings", "réécriture", "fairy tale", "fairy tales"], "Contes & Réécritures (Retellings)"],
+    [["uchronie", "alternate history"], "Uchronie / Histoire Alternative"],
     [["fantasy historique", "historical fantasy", "guy gavriel kay", "jacquelyn benson"], "Fantasy Historique"],
-    [["sword and sorcery", "sword & sorcery", "conan", "épée"], "Sword & Sorcery"],
-    [["science fantasy", "tamsyn muir", "jemisin", "absolu", "margot dessenne"], "Science Fantasy"],
-    [["steampunk", "vapeur", "victorien"], "Steampunk"],
+    [["sword and sorcery", "sword & sorcery", "conan"], "Sword & Sorcery"],
+    [["science fantasy", "tamsyn muir", "jemisin", "margot dessenne"], "Science Fantasy"],
+    [["steampunk", "victorien"], "Steampunk"],
     [["urban fantasy", "fantastique urbain", "dresden", "patricia briggs"], "Urban Fantasy"],
     [["dark fantasy", "nécromancie", "anouck faure", "cité diaphane"], "Dark Fantasy"],
-    [["epic fantasy", "high fantasy", "tolkien", "sanderson", "gwynne", "royaume", "épopée"], "High / Epic Fantasy"],
-    [["mythic", "mythologie", "mythologique", "madeline miller", "dieux"], "Fantasy Mythologique"],
-    [["young adult", "ya fantasy", "bardugo", "livre de poche jeunesse"], "Young Adult Fantasy"],
+    [["epic fantasy", "high fantasy", "tolkien", "sanderson", "gwynne", "épopée"], "High / Epic Fantasy"],
+    [["mythology", "mythic", "mythologie", "mythologique", "madeline miller"], "Fantasy Mythologique"],
+    [["paranormal romance", "romance paranormale"], "Romance Paranormale"],
+    [["magical realism", "réalisme magique"], "Réalisme Magique"],
+    [["young adult fantasy", "ya fantasy", "bardugo"], "Young Adult Fantasy"],
     // Science-Fiction
-    [["space opera", "vaisseau", "galaxie", "empire galactique", "asimov", "dune"], "Space Opera"],
-    [["dystopie", "dystopian", "post-apocalyptique", "post-apo", "effondrement", "survie"], "Dystopie / Post-Apocalyptique"],
-    [["cyberpunk", "solarpunk", "intelligence artificielle", "hacker", "virtuel"], "Cyberpunk / Solarpunk"],
-    [["hard sf", "hard science", "astrophysique", "quantique"], "Hard SF"],
+    [["space opera", "empire galactique", "asimov", "dune"], "Space Opera"],
+    [["dystopia", "dystopie", "dystopian", "post-apocalyptique", "post apocalyptic", "post-apo", "effondrement"], "Dystopie / Post-Apocalyptique"],
+    [["cyberpunk", "solarpunk", "intelligence artificielle", "hacker"], "Cyberpunk / Solarpunk"],
+    [["hard sf", "hard science fiction", "hard science", "astrophysique"], "Hard SF"],
+    [["time travel", "voyage temporel"], "Uchronie / Voyage temporel"],
+    [["aliens", "first contact", "extraterrestre"], "First Contact / Aliens"],
     // Thriller & Polar
-    [["thriller psychologique", "manipulation", "huis clos", "disparition", "domestique"], "Thriller Psychologique"],
-    [["polar", "enquête policière", "commissaire", "inspecteur", "meurtre", "détective"], "Polar / Enquête policière"],
+    [["psychological thriller", "thriller psychologique", "domestic thriller", "manipulation", "huis clos"], "Thriller Psychologique"],
+    [["polar", "enquête policière", "murder mystery", "mystery thriller", "crime", "commissaire", "inspecteur", "détective", "detective"], "Polar / Enquête policière"],
     [["cosy mystery", "cozy mystery", "détective amateur", "agatha christie"], "Cosy Mystery"],
-    [["roman noir", "hardboiled", "mafia", "gang"], "Roman Noir / Hardboiled"],
-    [["espionnage", "espion", "cia", "kgb", "géopolitique"], "Espionnage / Géopolitique"],
+    [["roman noir", "hardboiled", "noir"], "Roman Noir / Hardboiled"],
+    [["espionnage", "espionage", "espion", "géopolitique"], "Espionnage / Géopolitique"],
+    [["true crime"], "True Crime"],
     // Romance
-    [["romance contemporaine", "coup de foudre", "amour moderne"], "Romance Contemporaine"],
-    [["rom-com", "comédie romantique", "humour", "feel-good", "feel good"], "Rom-Com / Feel-Good"],
-    [["dark romance", "interdit", "captive"], "Dark Romance"],
-    [["new adult", "campus", "université", "colocation"], "New Adult / Campus"],
-    [["romance historique", "régence", "duc", "bridgerton"], "Romance Historique"],
-    // Littérature, Historique, Horreur, Manga, Non-Fiction
-    [["classique", "xixe siècle", "chef-d'œuvre", "littérature classique"], "Classique"],
-    [["roman contemporain", "saga familiale", "portrait", "intime"], "Roman Contemporain"],
-    [["roman historique", "époque", "mémoire historique"], "Roman Historique"],
-    [["horreur", "épouvante", "stephen king", "terreur"], "Horreur / Épouvante"],
-    [["gothique", "manoir", "fantôme", "hanté"], "Gothique"],
-    [["manga", "shonen", "seinen", "shojo"], "Manga"],
-    [["bande dessinée", "roman graphique", "bd"], "Bande Dessinée / Roman Graphique"],
-    [["développement personnel", "bien-être", "habitudes"], "Développement Personnel"],
-    [["biographie", "autobiographie", "mémoires"], "Biographie / Mémoires"]
+    [["contemporary romance", "romance contemporaine", "coup de foudre", "amour moderne"], "Romance Contemporaine"],
+    [["rom-com", "romantic comedy", "chick lit", "comédie romantique", "feel-good", "feel good"], "Rom-Com / Feel-Good"],
+    [["dark romance"], "Dark Romance"],
+    [["new adult", "sports romance", "college", "campus", "université", "colocation"], "New Adult / Campus"],
+    [["historical romance", "romance historique", "regency", "régence", "bridgerton"], "Romance Historique"],
+    // Littérature, Historique, Horreur, Manga, Non-Fiction (exactement alignés sur GENRE_TAXONOMY de public/app.js)
+    [["classics", "classique", "littérature classique"], "Classique"],
+    [["roman contemporain", "contemporary fiction", "contemporary"], "Roman Contemporain"],
+    [["saga familiale", "family saga"], "Saga Familiale"],
+    [["coming of age", "récit initiatique"], "Récit initiatique"],
+    [["poetry", "poésie", "théâtre", "plays"], "Poésie / Théâtre"],
+    [["short stories", "nouvelles"], "Nouvelles"],
+    [["historical fiction", "roman historique", "mémoire historique"], "Roman Historique"],
+    [["world war", "guerre mondiale", "xxe siècle"], "XXe siècle / Guerres mondiales"],
+    [["medieval", "moyen âge", "antiquité", "ancient history"], "Antiquité / Moyen Âge"],
+    [["horror", "horreur", "épouvante", "stephen king", "terreur"], "Horreur / Épouvante"],
+    [["gothic", "gothique", "manoir", "hanté"], "Gothique"],
+    [["paranormal", "supernatural", "occult", "occulte"], "Paranormal / Occulte"],
+    [["lovecraft", "cosmic horror"], "Cosmic Horror / Lovecraftien"],
+    [["shonen", "shōnen"], "Manga (Shōnen)"],
+    [["seinen"], "Manga (Seinen)"],
+    [["shojo", "shōjo", "josei"], "Manga (Shōjo / Josei)"],
+    ...(isManga ? [] : [
+      [["bande dessinée", "franco-belge"], "Bande Dessinée Franco-Belge"],
+      [["graphic novels", "graphic novel", "roman graphique"], "Roman Graphique"],
+      [["comics", "comic book"], "Comics"]
+    ]),
+    [["webtoon", "manhwa"], "Webtoon"],
+    ...(isNonFiction ? [[["history", "histoire", "civilisations"], "Histoire & Civilisations"]] : []),
+    [["self help", "self-help", "personal development", "développement personnel"], "Développement Personnel"],
+    [["biography", "autobiography", "memoir", "biographie", "autobiographie", "mémoires"], "Biographie / Mémoires"],
+    [["psychology", "philosophy", "psychologie", "philosophie"], "Philosophie & Psychologie"],
+    [["sociology", "politics", "feminism", "société", "politique", "féminisme"], "Société & Politique"],
+    [["business", "economics", "finance", "économie"], "Économie & Business"],
+    [["popular science", "science", "nature", "écologie"], "Sciences & Nature"]
   ];
   const detected = [];
   for (const [kws, label] of rules) {
-    if (kws.some((kw) => combined.includes(kw)) && !detected.includes(label)) detected.push(label);
+    if (kws.some((kw) => hasKeyword(combined, kw)) && !detected.includes(label)) detected.push(label);
   }
-  return detected.slice(0, 3);
+  return detected.slice(0, 4);
 }
 
 const SUBGENRE_TO_GENRE = {
@@ -337,31 +364,98 @@ const SUBGENRE_TO_GENRE = {
   "Dark Fantasy": ["Fantasy"],
   "High / Epic Fantasy": ["Fantasy"],
   "Fantasy Mythologique": ["Fantasy"],
+  "Romance Paranormale": ["Fantasy", "Romance"],
+  "Réalisme Magique": ["Fantasy"],
   "Young Adult Fantasy": ["Fantasy"],
   "Space Opera": ["Science-Fiction"],
   "Dystopie / Post-Apocalyptique": ["Science-Fiction"],
   "Cyberpunk / Solarpunk": ["Science-Fiction"],
   "Hard SF": ["Science-Fiction"],
+  "Uchronie / Voyage temporel": ["Science-Fiction"],
+  "First Contact / Aliens": ["Science-Fiction"],
   "Thriller Psychologique": ["Thriller / Polar"],
   "Polar / Enquête policière": ["Thriller / Polar"],
   "Cosy Mystery": ["Thriller / Polar"],
   "Roman Noir / Hardboiled": ["Thriller / Polar"],
   "Espionnage / Géopolitique": ["Thriller / Polar"],
+  "True Crime": ["Thriller / Polar", "Non-Fiction & Essais"],
   "Romance Contemporaine": ["Romance"],
   "Rom-Com / Feel-Good": ["Romance"],
   "Dark Romance": ["Romance"],
   "New Adult / Campus": ["Romance"],
-  "Romance Historique": ["Romance"],
+  "Romance Historique": ["Romance", "Historique"],
   "Classique": ["Littérature & Contemporain"],
   "Roman Contemporain": ["Littérature & Contemporain"],
+  "Saga Familiale": ["Littérature & Contemporain"],
+  "Récit initiatique": ["Littérature & Contemporain"],
+  "Poésie / Théâtre": ["Littérature & Contemporain"],
+  "Nouvelles": ["Littérature & Contemporain"],
   "Roman Historique": ["Historique"],
+  "XXe siècle / Guerres mondiales": ["Historique"],
+  "Antiquité / Moyen Âge": ["Historique"],
   "Horreur / Épouvante": ["Horreur & Fantastique"],
   "Gothique": ["Horreur & Fantastique"],
-  "Manga": ["Manga, BD & Graphique"],
-  "Bande Dessinée / Roman Graphique": ["Manga, BD & Graphique"],
+  "Paranormal / Occulte": ["Horreur & Fantastique"],
+  "Cosmic Horror / Lovecraftien": ["Horreur & Fantastique"],
+  "Manga (Shōnen)": ["Manga, BD & Graphique"],
+  "Manga (Seinen)": ["Manga, BD & Graphique"],
+  "Manga (Shōjo / Josei)": ["Manga, BD & Graphique"],
+  "Bande Dessinée Franco-Belge": ["Manga, BD & Graphique"],
+  "Roman Graphique": ["Manga, BD & Graphique"],
+  "Webtoon": ["Manga, BD & Graphique"],
+  "Comics": ["Manga, BD & Graphique"],
   "Développement Personnel": ["Non-Fiction & Essais"],
-  "Biographie / Mémoires": ["Non-Fiction & Essais"]
+  "Histoire & Civilisations": ["Non-Fiction & Essais"],
+  "Biographie / Mémoires": ["Non-Fiction & Essais"],
+  "Philosophie & Psychologie": ["Non-Fiction & Essais"],
+  "Société & Politique": ["Non-Fiction & Essais"],
+  "Économie & Business": ["Non-Fiction & Essais"],
+  "Sciences & Nature": ["Non-Fiction & Essais"]
 };
+
+function mapOfficialShelvesToGenres(shelves = []) {
+  const normShelves = shelves.map((s) => String(s || "").trim().toLowerCase()).filter(Boolean);
+  const genres = [];
+  const addG = (g) => { if (!genres.includes(g)) genres.push(g); };
+
+  const hasAny = (list) => normShelves.some((s) => list.some((kw) => s === kw || hasKeyword(s, kw)));
+
+  if (hasAny(["fantasy", "romantasy", "high fantasy", "epic fantasy", "urban fantasy", "dark fantasy", "grimdark", "cozy fantasy", "fae", "magic", "dragons", "witches", "mythology", "fairy tales"])) {
+    addG("Fantasy");
+  }
+  if (hasAny(["science fiction", "sci-fi", "sci fi", "dystopia", "dystopian", "space opera", "cyberpunk", "post apocalyptic", "post-apocalyptic", "time travel", "steampunk", "hard science fiction", "aliens"])) {
+    addG("Science-Fiction");
+  }
+  if (hasAny(["thriller", "mystery", "crime", "mystery thriller", "psychological thriller", "detective", "suspense", "noir", "cozy mystery", "espionage", "true crime", "policier", "polar", "whodunit"])) {
+    addG("Thriller / Polar");
+  }
+  if (hasAny(["romance", "contemporary romance", "historical romance", "dark romance", "romantasy", "paranormal romance", "new adult", "chick lit", "romantic comedy", "rom-com", "sports romance", "love"])) {
+    addG("Romance");
+  }
+  if (hasAny(["historical fiction", "roman historique", "historical romance", "regency", "world war ii", "ancient history", "medieval"]) ||
+      (hasAny(["historical", "history"]) && !genres.includes("Fantasy") && !genres.includes("Science-Fiction"))) {
+    addG("Historique");
+  }
+  if (hasAny(["horror", "horreur", "épouvante", "gothic", "ghosts", "vampires", "supernatural", "occult", "paranormal", "zombies", "werewolves", "lovecraftian"]) && !genres.includes("Fantasy")) {
+    addG("Horreur & Fantastique");
+  }
+  if (hasAny(["manga", "mangas", "comics", "graphic novels", "graphic novel", "bande dessinée", "bandes dessinées", "shonen", "seinen", "shojo", "josei", "webtoon", "manhwa", "comic book"])) {
+    addG("Manga, BD & Graphique");
+  }
+  if (hasAny(["nonfiction", "non-fiction", "biography", "memoir", "autobiography", "self help", "self-help", "personal development", "psychology", "philosophy", "business", "economics", "sociology", "politics", "essays", "popular science", "true crime", "essai", "biographie"])) {
+    addG("Non-Fiction & Essais");
+  }
+  if (hasAny(["contemporary", "contemporary fiction", "literary fiction", "classics", "classic", "poetry", "plays", "short stories", "womens fiction", "family"])) {
+    addG("Littérature & Contemporain");
+  }
+  // Si les sources officielles indiquent explicitement "Fiction" / "Roman" / "Novels" / "French Literature" / "Book Club"
+  // et qu'aucun genre de l'Imaginaire / Polar / BD / Non-Fiction n'est présent, c'est de la Littérature générale / Contemporain.
+  if (genres.length === 0 && hasAny(["fiction", "roman", "novels", "novel", "literature", "french literature", "book club", "general fiction", "drama"])) {
+    addG("Littérature & Contemporain");
+  }
+
+  return genres;
+}
 
 async function fetchBnfAuthorCountry(authorRecordId) {
   if (!authorRecordId) return null;
@@ -440,10 +534,15 @@ async function fetchFromBnf(isbnOrQuery) {
       if (sfc) origLang = sfc;
     }
 
-    // 200: Title ($a), Subtitle ($e), Author ($f)
+    // 200: Title ($a), Volume ($h), Subtitle ($e), Author ($f)
     for (const b of getFieldBlocks("200")) {
       const sfa = getSub(b, "a");
       if (sfa) data.title = sfa;
+      const sfh = getSub(b, "h");
+      if (sfh && !data.series_volume) {
+        const vm = sfh.match(/(\d+(?:[.,]\d+)?)/);
+        if (vm) data.series_volume = parseFloat(vm[1].replace(",", "."));
+      }
       const sfe = getSub(b, "e");
       if (sfe) {
         const { seriesName, seriesVolume } = extractSeriesInfo(sfe);
@@ -492,6 +591,12 @@ async function fetchFromBnf(isbnOrQuery) {
       }
     }
     if (bnfSubjects.length) data.bnf_subjects = bnfSubjects.join(" ");
+
+    // 454: Original Title ($t) for translated works (e.g. "The housemaid" for "La femme de ménage")
+    for (const b of getFieldBlocks("454")) {
+      const sft = getSub(b, "t").trim();
+      if (sft && !data.original_title) data.original_title = sft;
+    }
 
     // 461 / 410 / 225: Series ($t or $a) & Volume ($v)
     for (const tag of ["461", "410", "225"]) {
@@ -546,7 +651,35 @@ async function fetchFromBnf(isbnOrQuery) {
   return data;
 }
 
-async function fetchFromGoodreads(query) {
+async function fetchGoodreadsBookGenres(bookUrl) {
+  if (!bookUrl) return [];
+  const fullUrl = bookUrl.startsWith("http") ? bookUrl : `https://www.goodreads.com${bookUrl}`;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 2800) : null;
+  try {
+    const resp = await fetch(fullUrl, {
+      headers: DEFAULT_HEADERS,
+      signal: controller ? controller.signal : undefined
+    });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const blockMatch = html.match(/"bookGenres":\[(.*?)\]/);
+    if (!blockMatch) return [];
+    const names = [...blockMatch[1].matchAll(/"name":"([^"]+)"/g)].map((m) => unescapeHtml(m[1]));
+    return Array.from(new Set(names));
+  } catch {
+    return [];
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function authorLastNameToken(author = "") {
+  const parts = normStr(author).split(" ").filter((w) => w.length >= 3);
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+async function fetchFromGoodreads(query, expectedAuthor = "") {
   const data = {};
   if (!query) return data;
   try {
@@ -556,12 +689,22 @@ async function fetchFromGoodreads(query) {
     const items = await resp.json();
     if (!Array.isArray(items) || items.length === 0) return data;
 
-    let bestItem = items[0];
-    for (const it of items) {
+    const authToken = authorLastNameToken(expectedAuthor);
+    const matchingItems = authToken
+      ? items.filter((it) => normStr((it.author && it.author.name) || "").includes(authToken))
+      : items;
+    const pool = matchingItems.length > 0 ? matchingItems : (expectedAuthor ? [] : items);
+    if (pool.length === 0) return data;
+
+    let bestItem = pool[0];
+    for (const it of pool) {
       if (Number(it.avgRating || 0) > 0 && Number(it.ratingsCount || 0) > Number(bestItem.ratingsCount || 0)) {
         bestItem = it;
       }
     }
+
+    if (bestItem.bookUrl) data.book_url = bestItem.bookUrl;
+    data.ratings_count = Number(bestItem.ratingsCount || 0);
 
     const rawTitle = unescapeHtml(bestItem.title || "");
     const bareTitle = cleanTitleFromSeries(bestItem.bookTitleBare || rawTitle);
@@ -601,9 +744,6 @@ async function fetchFromGoodreads(query) {
     const descHtml = (bestItem.description && bestItem.description.html) || "";
     if (descHtml) {
       data.summary = unescapeHtml(descHtml);
-      const { genres, tags } = inferGenresAndTags(`${rawTitle} ${data.summary}`);
-      if (genres.length) data.genres = genres;
-      if (tags.length) data.tags = tags;
     }
   } catch (e) {
     console.warn("Goodreads error:", e);
@@ -744,30 +884,61 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
 
   // 1. Apply BnF (Official French Edition Authority)
   for (const [k, v] of Object.entries(bnfData)) {
+    if (k === "original_title" || k === "bnf_subjects" || k === "summary") continue;
     if (v !== null && v !== undefined && v !== "") result[k] = v;
   }
 
-  // 2. Query Goodreads (by Title+Author) & OpenLibrary Subjects in parallel
+  // 2. Query Goodreads (Original Title / French Title + Author / Title-only), OpenLibrary Subjects, and Google Books Title fallback in parallel
   let grData = grInitial;
   const knownTitle = result.title || (gbRes.data && gbRes.data.title) || olData.title || "";
   const knownAuthor = result.author || (gbRes.data && gbRes.data.author) || "";
+  const origTitle = bnfData.original_title || "";
   let olSubjects = "";
-  if (knownTitle) {
-    const qTitleAuth = `${cleanTitleFromSeries(knownTitle)} ${knownAuthor}`.trim();
-    const needGrFallback = (!grData.popularity_score || !grData.series_name) &&
-      qTitleAuth && qTitleAuth.toLowerCase() !== (isbn || cleanInput).toLowerCase();
+  let gbFallbackCategories = "";
+  let gbFallbackDesc = "";
 
-    const [grFallback, subjectsRes] = await Promise.all([
-      needGrFallback ? fetchFromGoodreads(qTitleAuth) : Promise.resolve(null),
-      fetchOpenLibrarySubjects(knownTitle, knownAuthor)
+  if (knownTitle) {
+    const cleanT = cleanTitleFromSeries(knownTitle);
+    const qOrigAuth = origTitle ? `${cleanTitleFromSeries(origTitle)} ${knownAuthor}`.trim() : "";
+    const qTitleAuth = `${cleanT} ${knownAuthor}`.trim();
+    const needGrFallback = !grData.book_url || Number(grData.ratings_count || 0) < 25;
+    const currentGbCats = String((gbRes.data && gbRes.data.categories) || "").trim();
+    const needGbTitleFallback = !currentGbCats || /^fiction$/i.test(currentGbCats);
+    const gbQueryStr = origTitle
+      ? `intitle:${cleanTitleFromSeries(origTitle)} ${authorLastNameToken(knownAuthor)}`
+      : `intitle:${cleanT} ${authorLastNameToken(knownAuthor)}`;
+
+    const [grOrig, grTitleAuth, grTitleOnly, subjectsFr, subjectsOrig, gbTitleRes] = await Promise.all([
+      needGrFallback && qOrigAuth ? fetchFromGoodreads(qOrigAuth, knownAuthor) : Promise.resolve(null),
+      needGrFallback && qTitleAuth ? fetchFromGoodreads(qTitleAuth, knownAuthor) : Promise.resolve(null),
+      needGrFallback && cleanT ? fetchFromGoodreads(cleanT, knownAuthor) : Promise.resolve(null),
+      fetchOpenLibrarySubjects(cleanT, knownAuthor),
+      origTitle ? fetchOpenLibrarySubjects(origTitle, knownAuthor) : Promise.resolve(""),
+      needGbTitleFallback ? fetchFromGoogleBooks(gbQueryStr.trim(), googleBooksApiKey) : Promise.resolve(null)
     ]);
-    olSubjects = subjectsRes || "";
-    if (grFallback) {
-      for (const [k, v] of Object.entries(grFallback)) {
-        if (v !== null && v !== undefined && v !== "" && !grData[k]) grData[k] = v;
+
+    olSubjects = `${subjectsFr || ""} ${subjectsOrig || ""}`.trim();
+    if (gbTitleRes && gbTitleRes.results) {
+      gbFallbackCategories = gbTitleRes.results.map((r) => r.categories || "").filter(Boolean).join(" ");
+      gbFallbackDesc = (gbTitleRes.data && gbTitleRes.data.description) || "";
+    }
+
+    // Pick the Goodreads candidate with the highest community ratingsCount (ensuring canonical work with rich bookGenres!)
+    const grCandidates = [grData, grOrig, grTitleAuth, grTitleOnly].filter((c) => c && (c.title || c.book_url));
+    grCandidates.sort((a, b) => Number(b.ratings_count || 0) - Number(a.ratings_count || 0));
+    if (grCandidates[0]) {
+      const bestGr = { ...grCandidates[0] };
+      for (const cand of grCandidates.slice(1)) {
+        for (const [k, v] of Object.entries(cand)) {
+          if (v !== null && v !== undefined && v !== "" && !bestGr[k]) bestGr[k] = v;
+        }
       }
+      grData = bestGr;
     }
   }
+
+  // Fetch official community-voted Goodreads genres (e.g. ["Fantasy", "Epic Fantasy"] or ["Thriller", "Psychological Thriller"])
+  const grOfficialGenres = grData.book_url ? await fetchGoodreadsBookGenres(grData.book_url) : [];
 
   // 3. Merge Goodreads
   if (grData.popularity_score) result.popularity_score = grData.popularity_score;
@@ -803,16 +974,32 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
     result.title = cleanTitleFromSeries(result.title) || result.title;
   }
 
-  // 6. Infer Genres, Tags & Subgenres (BnF + OpenLibrary Subjects + Goodreads + Google Books)
-  const textBlob = `${result.title} ${result.series_name} ${bnfData.bnf_subjects || ""} ${olSubjects} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.categories) || ""} ${(gbRes.data && gbRes.data.description) || ""}`;
-  const { genres, tags } = inferGenresAndTags(textBlob, result.publisher);
-  if (!result.genres || result.genres.length === 0) result.genres = genres;
+  // 6. Infer Genres, Tags & Subgenres (Goodreads Official Genres + BnF + OpenLibrary + Google Books)
+  const structuredLabels = [
+    ...grOfficialGenres,
+    ...(bnfData.bnf_subjects ? bnfData.bnf_subjects.split(/\s{2,}|;|,/) : []),
+    ...((gbRes.data && gbRes.data.categories) ? [gbRes.data.categories] : []),
+    ...(gbFallbackCategories ? [gbFallbackCategories] : []),
+    ...(olSubjects ? olSubjects.split(/\s{2,}|;|,/) : [])
+  ].filter(Boolean);
+
+  const officialGenres = mapOfficialShelvesToGenres(structuredLabels);
+
+  const allCategoriesText = `${grOfficialGenres.join(" ")} ${bnfData.bnf_subjects || ""} ${olSubjects} ${(gbRes.data && gbRes.data.categories) || ""} ${gbFallbackCategories}`;
+  const textBlob = `${result.title} ${origTitle} ${result.series_name} ${allCategoriesText} ${bnfData.summary || ""} ${grData.summary || ""} ${(gbRes.data && gbRes.data.description) || ""} ${gbFallbackDesc}`;
+
+  const { genres: kwGenres, tags } = inferGenresAndTags(textBlob, result.publisher);
+  const mergedGenres = [...officialGenres];
+  for (const g of kwGenres) {
+    if (!mergedGenres.includes(g)) mergedGenres.push(g);
+  }
+  result.genres = mergedGenres;
   if (!result.tags || result.tags.length === 0) result.tags = tags;
 
   result.fantasy_subgenres = inferFantasySubgenres(
     `${textBlob} ${result.tags.join(" ")}`,
     result.publisher,
-    result.title,
+    `${result.title} ${origTitle}`,
     result.author
   );
 
