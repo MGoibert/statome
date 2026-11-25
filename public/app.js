@@ -182,6 +182,8 @@ let state = {
   // Add Book state (Camera by default!)
   addMode: "camera", // "camera" | "search"
   cameraActive: false,
+  cameraError: null, // { title, hint, tech }
+  cameraSlowHint: false,
   lastScannedCode: "",
   addDraft: {
     isbn: "",
@@ -924,6 +926,19 @@ function renderAddView() {
             </div>
           ` : ""}
         </div>
+        <div id="scanner-slow-hint" style="display:${state.cameraActive && state.cameraSlowHint ? "block" : "none"};margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.35);border-radius:8px;font-size:0.8rem;color:#fde68a;text-align:left;">
+          💡 <b>Astuce :</b> reculez légèrement le livre (15–20 cm), assurez-vous d'avoir un bon éclairage et évitez les reflets sur le code-barres.
+        </div>
+        ${state.cameraError ? `
+          <div style="margin-top:10px;padding:10px 12px;background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.4);border-radius:10px;font-size:0.83rem;color:#fecaca;text-align:left;">
+            <div style="font-weight:700;margin-bottom:4px;">⚠️ ${escapeHtml(state.cameraError.title)}</div>
+            <div style="color:#fee2e2;line-height:1.4;">${escapeHtml(state.cameraError.hint)}</div>
+            ${state.cameraError.tech ? `<div style="margin-top:6px;font-size:0.72rem;color:#fca5a5;opacity:0.85;">Détail technique : ${escapeHtml(state.cameraError.tech)}</div>` : ""}
+            <button class="btn" style="margin-top:8px;padding:6px 10px;font-size:0.78rem;" onclick="window.setAddMode('search')">
+              🔍 Passer à la recherche manuelle
+            </button>
+          </div>
+        ` : ""}
         ${state.lastScannedCode ? `
           <div style="margin-top:10px;padding:8px 12px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);border-radius:8px;font-size:0.84rem;color:#6ee7b7;">
             ✅ Dernier ISBN scanné : <b>${escapeHtml(state.lastScannedCode)}</b> — <i>${escapeHtml(d.title)}</i>
@@ -1211,11 +1226,66 @@ window.handleDetectedIsbn = async function (clean) {
     forceSyncDraftToDom();
   } catch (e) {
     setSyncStatus(false, "Erreur");
-    alert("Erreur lors de la récupération de l'ISBN " + clean + " : " + e.message);
+    state.cameraError = {
+      title: `Impossible de récupérer les infos de l'ISBN ${clean}`,
+      hint: "Vérifiez votre connexion internet ou utilisez l'onglet « Recherche ISBN / Titre ».",
+      tech: e && e.message ? e.message : ""
+    };
+    renderAddView();
   } finally {
     isProcessingScan = false;
   }
 };
+
+let cameraSlowTimer = null;
+
+function formatCameraError(err) {
+  const ua = navigator.userAgent || "";
+  const isInApp = /FBAN|FBAV|Instagram|WhatsApp|Snapchat|Line|MicroMessenger|TikTok/i.test(ua);
+  const name = (err && err.name) || "";
+  const msg = (err && err.message) || String(err || "");
+
+  if (isInApp) {
+    return {
+      title: "Navigateur intégré détecté (WhatsApp / Instagram...)",
+      hint: "Les navigateurs intégrés aux messageries bloquent souvent l'appareil photo. Ouvrez ce lien directement dans Safari (iPhone) ou Chrome (Android).",
+      tech: name || msg
+    };
+  }
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return {
+      title: "Connexion non sécurisée",
+      hint: "L'accès à la caméra nécessite une adresse en HTTPS.",
+      tech: name || msg
+    };
+  }
+  if (/NotAllowedError|PermissionDenied/i.test(name + " " + msg)) {
+    return {
+      title: "Accès à la caméra refusé",
+      hint: "Autorisez la caméra dans les réglages de Safari / Chrome (icône cadenas ou « Aa » dans la barre d'adresse), puis réessayez.",
+      tech: name || msg
+    };
+  }
+  if (/NotFoundError|DevicesNotFound/i.test(name + " " + msg)) {
+    return {
+      title: "Aucune caméra détectée",
+      hint: "Votre appareil ne semble pas exposer de caméra compatible au navigateur.",
+      tech: name || msg
+    };
+  }
+  if (/NotReadableError|TrackStartError|AbortError/i.test(name + " " + msg)) {
+    return {
+      title: "Caméra déjà utilisée",
+      hint: "Une autre application utilise peut-être déjà la caméra. Fermez-la et réessayez.",
+      tech: name || msg
+    };
+  }
+  return {
+    title: "Impossible de démarrer la caméra",
+    hint: "Essayez de recharger la page, d'ouvrir l'app dans Safari/Chrome, ou utilisez la recherche par titre.",
+    tech: name ? `${name}: ${msg}` : msg
+  };
+}
 
 function pickBestRearCamera(cameras) {
   if (!Array.isArray(cameras) || cameras.length === 0) return null;
@@ -1239,11 +1309,18 @@ function pickBestRearCamera(cameras) {
 window.startBarcodeCamera = async function () {
   isProcessingScan = false;
   state.cameraActive = true;
+  state.cameraError = null;
+  state.cameraSlowHint = false;
+  if (cameraSlowTimer) clearTimeout(cameraSlowTimer);
   renderAddView();
   try {
     if (typeof Html5Qrcode === "undefined") {
-      alert("Le module caméra est en cours de chargement, réessayez dans une seconde.");
       state.cameraActive = false;
+      state.cameraError = {
+        title: "Module caméra en cours de chargement",
+        hint: "Patientez 2 secondes puis réessayez (ou vérifiez votre connexion).",
+        tech: "Html5Qrcode undefined"
+      };
       renderAddView();
       return;
     }
@@ -1321,15 +1398,30 @@ window.startBarcodeCamera = async function () {
         () => {}
       );
     }
+
+    cameraSlowTimer = setTimeout(() => {
+      if (state.cameraActive && !isProcessingScan) {
+        state.cameraSlowHint = true;
+        const hintEl = document.getElementById("scanner-slow-hint");
+        if (hintEl) hintEl.style.display = "block";
+      }
+    }, 8000);
   } catch (err) {
     state.cameraActive = false;
+    state.cameraSlowHint = false;
+    if (cameraSlowTimer) clearTimeout(cameraSlowTimer);
+    state.cameraError = formatCameraError(err);
     renderAddView();
-    alert("Impossible d'accéder à la caméra : vérifiez que vous avez autorisé l'accès caméra dans Safari/Chrome.");
   }
 };
 
 window.stopBarcodeCamera = async function () {
   state.cameraActive = false;
+  state.cameraSlowHint = false;
+  if (cameraSlowTimer) {
+    clearTimeout(cameraSlowTimer);
+    cameraSlowTimer = null;
+  }
   if (html5QrScanner) {
     try {
       await html5QrScanner.stop();
