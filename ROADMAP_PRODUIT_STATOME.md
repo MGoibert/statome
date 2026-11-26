@@ -54,8 +54,8 @@
   - Pouvoir relire un livre déjà terminé sans écraser la date ni la note de la première lecture.
 - [ ] **Suivi des prêts de livres**
   - Indiquer à qui un livre a été prêté et depuis quelle date (*« Prêté à Julie le 12/11 »*) avec un filtre dédié dans la bibliothèque.
-- [x] **Meilleure gestion des Livres Audio (Audiobooks)** *(livré sur `staging` — durée totale en `h/min`, suivi en heures/minutes ou `%`, exclu de la vitesse Focus `pages/h`)*
-- [x] **Ajout ultra-rapide pour Liseuses (Kindle / Kobo / Vivlio) & Audiobooks (sans code-barres)** *(livré sur `staging` — 3 pastilles format, autocomplétion visuelle instantanée avec couvertures, collage de lien Amazon/Kindle/Audible/Kobo/Fnac/Goodreads ; suivi `%` sur liseuse)*
+- [x] **Meilleure gestion des Livres Audio (Audiobooks)** *(livré — durée totale en `h/min`, suivi en heures/minutes ou `%`, exclu de la vitesse Focus `pages/h`)*
+- [x] **Ajout ultra-rapide pour Liseuses (Kindle / Kobo / Vivlio) & Audiobooks (sans code-barres)** *(livré — 3 pastilles format, autocomplétion visuelle FR instantanée avec couvertures, collage de lien Amazon/Kindle/Audible/Kobo/Fnac/Goodreads ; suivi `%` sur liseuse)*
 - [ ] **Support des Magazines & Revues (ex. *Fluide Glacial*, *Bifrost*, *Métal Hurlant*, *Science & Vie*)**
   - *Faisabilité* : oui ! Les magazines utilisent un code-barres **`977...` (ISSN)** (ou `378...` en kiosque FR) au lieu de `978/979` (ISBN).
   - *Pistes* :
