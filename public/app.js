@@ -1552,7 +1552,7 @@ function renderSagasResultsHtml(resultsEl) {
       const safeName = escapeHtml(sg.name).replace(/'/g, "\\'");
       return `
         <div class="card" style="padding:12px;margin-bottom:10px;border-color:${sg.inProgress ? "rgba(99,102,241,0.5)" : "var(--border)"};">
-          <div style="display:flex;gap:10px;align-items:flex-start;">
+          <div style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;" onclick="window.openSagaDetailModal('${safeName}')">
             ${cover
               ? `<img src="${escapeHtml(cover)}" style="width:46px;height:68px;object-fit:cover;border-radius:6px;flex-shrink:0;" />`
               : `<div style="width:46px;height:68px;background:#334155;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">🐉</div>`
@@ -1562,7 +1562,10 @@ function renderSagasResultsHtml(resultsEl) {
                 <div style="font-weight:800;font-size:0.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(sg.name)}</div>
                 ${sg.avgRating ? `<span style="color:#FBBF24;font-size:0.78rem;font-weight:700;flex-shrink:0;">⭐ ${sg.avgRating.toFixed(2).replace(/\.?0+$/, "")}</span>` : ""}
               </div>
-              <div style="font-size:0.78rem;color:var(--muted);margin-bottom:5px;">${escapeHtml(sg.author)} • <b>${sg.finished}/${sg.total}</b> lu(s)</div>
+              <div style="font-size:0.78rem;color:var(--muted);margin-bottom:5px;display:flex;justify-content:space-between;gap:6px;">
+                <span>${escapeHtml(sg.author)} • <b>${sg.finished}/${sg.total}</b> lu(s)</span>
+                <span style="color:var(--primary-light);font-weight:600;flex-shrink:0;">Toute la saga ▸</span>
+              </div>
               <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${pct}%;background:${pct === 100 ? "#10B981" : "var(--primary)"};"></div></div>
               ${sg.missingVols.length > 0 ? `<div style="font-size:0.71rem;color:#FBBF24;margin-top:4px;">⚠️ Tome(s) manquant(s) : ${sg.missingVols.map((v) => "T." + v).join(", ")}</div>` : ""}
             </div>
@@ -1585,6 +1588,163 @@ function renderSagasResultsHtml(resultsEl) {
     ${html || `<div style="text-align:center;color:var(--muted);padding:30px;">Aucune saga trouvée. Renseignez le champ « Série / Saga » sur vos livres !</div>`}
   `;
 }
+
+let currentSagaExternalVolumes = [];
+let currentSagaModalName = "";
+
+function renderSagaDetailTimeline(seriesName, externalVolumes = [], loadingExternal = false) {
+  const target = String(seriesName || "").toLowerCase();
+  const ownedBooks = state.books
+    .filter((b) => b.series_name && b.series_name.toLowerCase() === target)
+    .sort((a, b) => Number(a.series_volume || 999) - Number(b.series_volume || 999));
+
+  const author = ownedBooks[0] ? ownedBooks[0].author : "";
+  const baseGenres = (ownedBooks[0] && ownedBooks[0].genres) || [];
+  const baseSubg = (ownedBooks[0] && ownedBooks[0].fantasy_subgenres) || [];
+
+  // Fusionne mes tomes + les tomes parus détectés en ligne
+  const rows = [];
+  const ownedVols = new Set();
+  const ownedTitles = new Set();
+
+  for (const b of ownedBooks) {
+    if (b.series_volume) ownedVols.add(String(Number(b.series_volume)));
+    ownedTitles.add((b.title || "").toLowerCase().trim());
+    rows.push({ kind: "owned", vol: Number(b.series_volume || 999), book: b });
+  }
+
+  currentSagaExternalVolumes = [];
+  for (const ev of externalVolumes || []) {
+    const vKey = ev.series_volume ? String(Number(ev.series_volume)) : "";
+    const tKey = (ev.title || "").toLowerCase().trim();
+    if ((vKey && ownedVols.has(vKey)) || (tKey && ownedTitles.has(tKey))) continue;
+    const extIdx = currentSagaExternalVolumes.length;
+    currentSagaExternalVolumes.push({
+      ...ev,
+      series_name: seriesName,
+      author: ev.author || author,
+      genres: baseGenres,
+      fantasy_subgenres: baseSubg
+    });
+    rows.push({ kind: "missing", vol: Number(ev.series_volume || 999), ext: ev, extIdx });
+  }
+
+  rows.sort((a, b) => a.vol - b.vol);
+
+  const cardsHtml = rows
+    .map((r) => {
+      if (r.kind === "owned") {
+        const b = r.book;
+        const col = STATUS_COLORS[b.status] || "#64748B";
+        return `
+          <div onclick="window.openBookDetailModal(${b.id}, 'info')" style="cursor:pointer;display:flex;gap:10px;align-items:center;background:rgba(30,41,59,0.75);padding:9px 10px;border-radius:10px;border:1px solid ${col}55;">
+            ${b.cover_url
+              ? `<img src="${escapeHtml(b.cover_url)}" style="width:42px;height:62px;object-fit:cover;border-radius:5px;flex-shrink:0;" />`
+              : `<div style="width:42px;height:62px;background:#334155;border-radius:5px;display:flex;align-items:center;justify-content:center;">📖</div>`
+            }
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:2px;">
+                <span style="font-size:0.73rem;font-weight:700;color:var(--primary-light);">${b.series_volume ? `Tome ${b.series_volume}` : "Hors-série"}</span>
+                <span class="status-badge" style="background:${col}22;color:${col};border:1px solid ${col}55;">${escapeHtml(b.status)}</span>
+              </div>
+              <div style="font-weight:700;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.title)}</div>
+              <div style="font-size:0.74rem;color:var(--muted);margin-top:2px;">
+                ${b.page_count} p.${b.rating_global ? ` • ⭐ ${Number(b.rating_global).toFixed(2).replace(/\.?0+$/, "")}/5` : ""}
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        const ev = r.ext;
+        return `
+          <div style="display:flex;gap:10px;align-items:center;background:rgba(15,23,42,0.5);padding:9px 10px;border-radius:10px;border:1px dashed rgba(148,163,184,0.45);">
+            ${ev.cover_url
+              ? `<img src="${escapeHtml(ev.cover_url)}" style="width:42px;height:62px;object-fit:cover;border-radius:5px;flex-shrink:0;opacity:0.85;" />`
+              : `<div style="width:42px;height:62px;background:#1e293b;border-radius:5px;display:flex;align-items:center;justify-content:center;opacity:0.7;">📘</div>`
+            }
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:2px;">
+                <span style="font-size:0.73rem;font-weight:700;color:#94A3B8;">Tome ${ev.series_volume}</span>
+                <span class="status-badge" style="background:rgba(148,163,184,0.16);color:#CBD5E1;border:1px solid rgba(148,163,184,0.35);">🆕 Pas dans ma liste</span>
+              </div>
+              <div style="font-weight:700;font-size:0.86rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#E2E8F0;">${escapeHtml(ev.title)}</div>
+              <div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">
+                ${ev.page_count ? `${ev.page_count} p.` : ""}${ev.popularity_score ? `${ev.page_count ? " • " : ""}⭐ ${ev.popularity_score}/5` : ""}${ev.publication_year ? ` • ${ev.publication_year}` : ""}
+              </div>
+              <div style="display:flex;gap:6px;margin-top:6px;">
+                <button class="btn" style="padding:3px 8px;font-size:0.72rem;color:#E879F9;border-color:rgba(232,121,249,0.4);" onclick="window.quickAddSagaVolume(${r.extIdx}, 'Wishlist')">💫 + Wishlist</button>
+                <button class="btn" style="padding:3px 8px;font-size:0.72rem;color:#38BDF8;border-color:rgba(56,189,248,0.4);" onclick="window.quickAddSagaVolume(${r.extIdx}, 'À acheter')">🛒 + À acheter</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    })
+    .join("");
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div>
+        <h3 style="margin:0;">🐉 ${escapeHtml(seriesName)}</h3>
+        <div style="font-size:0.78rem;color:var(--muted);">${escapeHtml(author)} • ${ownedBooks.length} dans ma biblio${externalVolumes.length > 0 ? ` • ${rows.length} tome(s) au total` : ""}</div>
+      </div>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    ${loadingExternal ? `<div style="font-size:0.76rem;color:var(--primary-light);margin-bottom:8px;">⏳ Recherche des autres tomes parus (BnF / Goodreads)...</div>` : ""}
+    <div style="display:grid;gap:8px;margin-top:8px;">
+      ${cardsHtml}
+    </div>
+  `;
+}
+
+window.openSagaDetailModal = async function (seriesName) {
+  currentSagaModalName = seriesName;
+  const target = String(seriesName || "").toLowerCase();
+  const firstBook = state.books.find((b) => b.series_name && b.series_name.toLowerCase() === target);
+  const author = firstBook ? firstBook.author : "";
+
+  openModal(renderSagaDetailTimeline(seriesName, [], true));
+
+  try {
+    const res = await apiCall("saga_volumes", { series_name: seriesName, author });
+    if (currentSagaModalName === seriesName) {
+      const box = document.getElementById("modal-content");
+      if (box) box.innerHTML = renderSagaDetailTimeline(seriesName, (res && res.volumes) || [], false);
+    }
+  } catch {
+    if (currentSagaModalName === seriesName) {
+      const box = document.getElementById("modal-content");
+      if (box) box.innerHTML = renderSagaDetailTimeline(seriesName, [], false);
+    }
+  }
+};
+
+window.quickAddSagaVolume = async function (extIdx, targetStatus = "Wishlist") {
+  const ev = currentSagaExternalVolumes[extIdx];
+  if (!ev) return;
+  setSyncStatus(true, "Ajout...");
+  try {
+    await apiCall("add_book", {
+      isbn: ev.isbn || null,
+      title: ev.title,
+      author: ev.author || "Auteur inconnu",
+      series_name: ev.series_name,
+      series_volume: ev.series_volume || null,
+      publication_year: ev.publication_year || null,
+      page_count: ev.page_count || 320,
+      popularity_score: ev.popularity_score || null,
+      cover_url: ev.cover_url || null,
+      genres: ev.genres || [],
+      fantasy_subgenres: ev.fantasy_subgenres || [],
+      status: targetStatus
+    });
+    await window.syncFromServer();
+    await window.openSagaDetailModal(ev.series_name);
+  } catch (e) {
+    setSyncStatus(false, "Erreur");
+    alert("Erreur lors de l'ajout : " + e.message);
+  }
+};
 
 window.openSagaNotesModal = function (seriesName, maxVolume = 9999) {
   const target = String(seriesName || "").toLowerCase();

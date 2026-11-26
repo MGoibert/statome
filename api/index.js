@@ -1063,6 +1063,151 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
   return { best: result, results: listResults };
 }
 
+async function fetchSagaVolumes(seriesName, author = "") {
+  const cleanSeries = String(seriesName || "").trim();
+  if (!cleanSeries) return [];
+  const authLast = authorLastNameToken(author);
+  const normSeries = normStr(cleanSeries);
+  const isBoxSet = (t) => /\b(intégrale|integrale|coffret|box\s*set|books?\s*set|collection\s+\d|omnibus|tomes?\s*\d+\s*[-àa]\s*\d+|#\d+-\d+)\b/i.test(t || "");
+
+  const extractVolFromTitle = (t) => {
+    const info = extractSeriesInfo(t || "");
+    if (info.seriesVolume !== null && info.seriesVolume !== undefined) return info.seriesVolume;
+    const m = String(t || "").match(/(?:\b(?:tome|vol(?:ume)?|livre|t)\.?\s*|#)(\d+(?:[.,]\d+)?)\b/i);
+    return m ? parseFloat(m[1].replace(",", ".")) : null;
+  };
+
+  const fetchGrList = async (q) => {
+    try {
+      const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q.trim())}`;
+      const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+      if (!resp.ok) return [];
+      const items = await resp.json();
+      return Array.isArray(items) ? items : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const fetchBnfList = async (q) => {
+    try {
+      const url = `https://catalogue.bnf.fr/api/SRU?operation=searchRetrieve&version=1.2&query=bib.anywhere+all+"${encodeURIComponent(q)}"&recordSchema=unimarcXchange&maximumRecords=12`;
+      const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+      if (!resp.ok) return [];
+      const xml = await resp.text();
+      const records = [...xml.matchAll(/<mxc:record[^>]*id="([^"]*)"[^>]*>([\s\S]*?)<\/mxc:record>/gi)];
+      const out = [];
+      for (const rec of records) {
+        const arkId = rec[1] || "";
+        const body = rec[2] || "";
+        const getField = (tag, code) => {
+          const re = new RegExp(`<mxc:datafield[^>]*tag="${tag}"[^>]*>[\\s\\S]*?<mxc:subfield[^>]*code="${code}"[^>]*>([\\s\\S]*?)<\\/mxc:subfield>`, "i");
+          const m = body.match(re);
+          return m ? unescapeHtml(m[1]).trim() : "";
+        };
+        const title = getField("200", "a");
+        if (!title || isBoxSet(title)) continue;
+        const fAuth = getField("200", "f") || `${getField("700", "b")} ${getField("700", "a")}`.trim();
+        if (authLast && fAuth && !normStr(fAuth).includes(authLast)) continue;
+        const s225a = getField("225", "a") || getField("461", "t");
+        const s225v = getField("225", "v") || getField("461", "v") || getField("200", "h");
+        const vol = extractVolFromTitle(`${s225v} ${title}`);
+        if (vol === null) continue;
+        // Vérifier que ça appartient bien à la série demandée
+        if (s225a && !normStr(s225a).includes(normSeries.slice(0, 8)) && !normSeries.includes(normStr(s225a).slice(0, 8))) continue;
+        const isbn = getField("073", "a").replace(/\D/g, "") || getField("010", "a").replace(/\D/g, "");
+        const pagesM = getField("215", "a").match(/(\d{2,4})/);
+        const yearM = (getField("214", "d") || getField("210", "d")).match(/\b(19\d\d|20\d\d)\b/);
+        const cover = arkId && body.toLowerCase().includes("couverture")
+          ? `https://catalogue.bnf.fr/couverture?appName=NE&idArk=${arkId}&couverture=1`
+          : "";
+        out.push({
+          series_volume: vol,
+          title: cleanTitleFromSeries(title) || title,
+          author: fAuth || author,
+          isbn: isbn.length === 13 || isbn.length === 10 ? isbn : "",
+          page_count: pagesM ? Number(pagesM[1]) : null,
+          publication_year: yearM ? Number(yearM[1]) : null,
+          popularity_score: null,
+          cover_url: cover,
+          source: "bnf"
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  };
+
+  const [gr1, gr2, bnfItems] = await Promise.all([
+    fetchGrList(authLast ? `${cleanSeries} ${authLast}` : cleanSeries),
+    fetchGrList(cleanSeries),
+    fetchBnfList(authLast ? `${cleanSeries} ${authLast}` : cleanSeries)
+  ]);
+
+  const byVol = new Map();
+
+  // 1. Intégrer BnF en priorité pour les titres français + ISBN
+  for (const item of bnfItems) {
+    const key = String(item.series_volume);
+    if (!byVol.has(key)) byVol.set(key, item);
+  }
+
+  // 2. Intégrer Goodreads (tomes manquants, notes communauté, couvertures HD, pages)
+  for (const it of [...gr1, ...gr2]) {
+    const rawT = unescapeHtml(it.title || "");
+    if (!rawT || isBoxSet(rawT)) continue;
+    const itAuth = unescapeHtml((it.author && it.author.name) || "");
+    if (authLast && itAuth && !normStr(itAuth).includes(authLast)) continue;
+    const vol = extractVolFromTitle(rawT);
+    if (vol === null || vol <= 0 || vol > 150) continue;
+
+    // Vérifier que le titre ou la série évoque bien la saga
+    const normRaw = normStr(rawT);
+    const seriesTokens = normSeries.split(" ").filter((w) => w.length >= 4);
+    const matchesSeries = seriesTokens.length === 0 || seriesTokens.some((tok) => normRaw.includes(tok));
+    if (!matchesSeries) continue;
+
+    const cleanT = cleanTitleFromSeries(it.bookTitleBare || rawT) || rawT;
+    const imgUrl = String(it.imageUrl || "");
+    const hdCover = imgUrl && !imgUrl.includes("nophoto")
+      ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
+      : "";
+    const rating = Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null;
+    const pages = Number(it.numPages || 0) > 0 ? Number(it.numPages) : null;
+    const ratingsCount = Number(it.ratingsCount || 0);
+
+    const key = String(vol);
+    if (!byVol.has(key)) {
+      byVol.set(key, {
+        series_volume: vol,
+        title: cleanT,
+        author: itAuth || author,
+        isbn: "",
+        page_count: pages,
+        publication_year: null,
+        popularity_score: rating,
+        cover_url: hdCover,
+        ratings_count: ratingsCount,
+        source: "goodreads"
+      });
+    } else {
+      const ex = byVol.get(key);
+      if (!ex.popularity_score && rating) ex.popularity_score = rating;
+      if (!ex.cover_url && hdCover) ex.cover_url = hdCover;
+      if (!ex.page_count && pages) ex.page_count = pages;
+      if (ex.source === "goodreads" && ratingsCount > Number(ex.ratings_count || 0)) {
+        ex.title = cleanT;
+        ex.ratings_count = ratingsCount;
+        if (hdCover) ex.cover_url = hdCover;
+        if (rating) ex.popularity_score = rating;
+      }
+    }
+  }
+
+  return Array.from(byVol.values()).sort((a, b) => Number(a.series_volume) - Number(b.series_volume));
+}
+
 // ==========================================
 // AUTHENTIFICATION & MULTI-TENANT (CRYPTO)
 // ==========================================
@@ -1427,6 +1572,32 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         ).catch(() => {});
       }
       return { status: 200, data: { ok: true, best, results } };
+    }
+
+    if (action === "saga_volumes") {
+      const sName = String(query.series_name || body.series_name || "").trim();
+      const sAuth = String(query.author || body.author || "").trim();
+      if (!sName) return { status: 200, data: { ok: true, volumes: [] } };
+      const cacheKey = `saga:${normStr(sName)}:${authorLastNameToken(sAuth)}`.slice(0, 110);
+      const cached = await neonQuery(connStr, "SELECT payload FROM catalog_cache WHERE query_key = $1", [cacheKey]).catch(() => []);
+      if (cached && cached.length > 0 && cached[0].payload) {
+        try {
+          const parsed = JSON.parse(cached[0].payload);
+          if (Array.isArray(parsed.volumes) && parsed.volumes.length > 0) {
+            return { status: 200, data: { ok: true, volumes: parsed.volumes, cached: true } };
+          }
+        } catch {}
+      }
+      const volumes = await fetchSagaVolumes(sName, sAuth);
+      if (volumes.length > 0) {
+        await neonQuery(
+          connStr,
+          `INSERT INTO catalog_cache (query_key, payload, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (query_key) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()`,
+          [cacheKey, JSON.stringify({ volumes })]
+        ).catch(() => {});
+      }
+      return { status: 200, data: { ok: true, volumes } };
     }
 
     if (action === "bootstrap") {
