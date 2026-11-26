@@ -775,8 +775,23 @@
     const booksById = {};
     books.forEach((b) => { booksById[Number(b.id)] = b; });
 
+    // Associer chaque livre à sa dernière session (pour rattraper les livres marqués "Terminé" sans finished_at)
+    const lastSessionDateByBook = {};
+    sessions.forEach((s) => {
+      const bid = Number(s.book_id);
+      const dtStr = String(s.start_time || "");
+      if (!lastSessionDateByBook[bid] || dtStr > lastSessionDateByBook[bid]) {
+        lastSessionDateByBook[bid] = dtStr;
+      }
+    });
+
     const periodBooks = books
-      .filter((b) => b.status === "Terminé" && String(b.finished_at || "").startsWith(periodPrefix))
+      .filter((b) => {
+        if (b.status !== "Terminé") return false;
+        if (b.finished_at) return String(b.finished_at).startsWith(periodPrefix);
+        const lastSess = lastSessionDateByBook[Number(b.id)] || "";
+        return lastSess.startsWith(periodPrefix);
+      })
       .sort((a, b) => Number(b.rating_global || 0) - Number(a.rating_global || 0));
 
     const periodSessions = sessions.filter((s) => String(s.start_time || "").startsWith(periodPrefix));
@@ -861,11 +876,12 @@
         const cols = mosaicBooks.length <= 4 ? mosaicBooks.length : (mosaicBooks.length <= 6 ? 3 : 4);
         const mGap = 24;
         const maxGridW = 920;
-        const cw = Math.min(220, Math.floor((maxGridW - mGap * (cols - 1)) / cols));
+        const maxSingleW = mosaicBooks.length === 1 ? 360 : (mosaicBooks.length === 2 ? 300 : 220);
+        const cw = Math.min(maxSingleW, Math.floor((maxGridW - mGap * (cols - 1)) / cols));
         const ch = Math.round(cw * 1.48);
         const totalGridW = cols * cw + (cols - 1) * mGap;
         const startX = (STORY_W - totalGridW) / 2;
-        const startY = 445;
+        const startY = mosaicBooks.length <= 2 ? 520 : 445;
 
         mosaicBooks.forEach((b, i) => {
           const c = i % cols;
@@ -1105,6 +1121,8 @@
       const gMap = {};
       const sgMap = {};
       const fmtMap = { Papier: 0, Liseuse: 0, Audio: 0 };
+      const sizeMap = { court: 0, moyen: 0, long: 0, pave: 0 };
+      let sumBookPages = 0;
 
       genreSourceBooks.forEach((b) => {
         const gs = Array.isArray(b.genres) && b.genres.length > 0 ? b.genres : ["Autre"];
@@ -1122,15 +1140,24 @@
         if (b.format === "Audio") fmtMap.Audio++;
         else if (b.format === "Numérique") fmtMap.Liseuse++;
         else fmtMap.Papier++;
+
+        const p = Number(b.page_count || 0);
+        if (p > 0) {
+          sumBookPages += p;
+          if (p < 300) sizeMap.court++;
+          else if (p < 500) sizeMap.moyen++;
+          else if (p < 700) sizeMap.long++;
+          else sizeMap.pave++;
+        }
       });
 
-      const topGenres = Object.values(gMap).sort((a, b) => b.count - a.count).slice(0, 5);
+      const topGenres = Object.values(gMap).sort((a, b) => b.count - a.count).slice(0, 4);
       const topSubgenres = Object.entries(sgMap).sort((a, b) => b[1] - a[1]).slice(0, 8);
       const totalGenreCount = Math.max(1, topGenres.reduce((a, g) => a + g.count, 0));
       const barColors = ["#818CF8", "#38BDF8", "#E879F9", "#34D399", "#FB923C"];
 
-      // Bloc Top Genres
-      drawRoundedRect(ctx, 80, 275, STORY_W - 160, 620, 26);
+      // Bloc 1 : Top Genres
+      drawRoundedRect(ctx, 80, 260, STORY_W - 160, 465, 26);
       ctx.fillStyle = "rgba(30,41,59,0.78)";
       ctx.fill();
       ctx.strokeStyle = "rgba(129,140,248,0.28)";
@@ -1139,42 +1166,42 @@
 
       ctx.textAlign = "left";
       ctx.fillStyle = "#818CF8";
-      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText("📚 TOP GENRES LUS", 120, 338);
+      ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("📚 TOP GENRES LUS", 120, 318);
 
       if (topGenres.length > 0) {
         topGenres.forEach((g, i) => {
-          const gy = 395 + i * 96;
+          const gy = 374 + i * 86;
           const pct = Math.round((g.count / totalGenreCount) * 100);
           const avgR = g.rCnt > 0 ? ` • ★ ${(g.rSum / g.rCnt).toFixed(1)}` : "";
 
           ctx.textAlign = "left";
           ctx.fillStyle = "#F8FAFC";
-          ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.font = "700 28px -apple-system, BlinkMacSystemFont, sans-serif";
           ctx.fillText(g.name, 120, gy);
 
           ctx.textAlign = "right";
           ctx.fillStyle = "#CBD5E1";
-          ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
           ctx.fillText(`${g.count} (${pct}%)${avgR}`, STORY_W - 120, gy);
 
           const trackW = STORY_W - 240;
-          drawRoundedRect(ctx, 120, gy + 16, trackW, 24, 12);
+          drawRoundedRect(ctx, 120, gy + 14, trackW, 20, 10);
           ctx.fillStyle = "rgba(15,23,42,0.8)";
           ctx.fill();
 
-          drawRoundedRect(ctx, 120, gy + 16, Math.max(36, Math.round((pct / 100) * trackW)), 24, 12);
+          drawRoundedRect(ctx, 120, gy + 14, Math.max(32, Math.round((pct / 100) * trackW)), 20, 10);
           ctx.fillStyle = barColors[i % barColors.length];
           ctx.fill();
         });
       } else {
         ctx.fillStyle = "#64748B";
-        ctx.font = "600 30px -apple-system, BlinkMacSystemFont, sans-serif";
-        ctx.fillText("Aucune donnée de genre sur cette période.", 120, 460);
+        ctx.font = "600 28px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Aucune donnée de genre sur cette période.", 120, 420);
       }
 
-      // Bloc Sous-genres favoris (pills)
-      drawRoundedRect(ctx, 80, 935, STORY_W - 160, 415, 26);
+      // Bloc 2 : Sous-genres favoris (pills)
+      drawRoundedRect(ctx, 80, 755, STORY_W - 160, 290, 26);
       ctx.fillStyle = "rgba(30,41,59,0.78)";
       ctx.fill();
       ctx.strokeStyle = "rgba(232,121,249,0.32)";
@@ -1183,39 +1210,95 @@
 
       ctx.textAlign = "left";
       ctx.fillStyle = "#E879F9";
-      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText("✨ SOUS-GENRES DOMINANTS", 120, 998);
+      ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("✨ SOUS-GENRES DOMINANTS", 120, 812);
 
       if (topSubgenres.length > 0) {
         let px = 120;
-        let py = 1040;
-        ctx.font = "700 27px -apple-system, BlinkMacSystemFont, sans-serif";
+        let py = 848;
+        ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
         topSubgenres.forEach(([sg, cnt]) => {
           const txt = `${sg} (${cnt})`;
-          const w = ctx.measureText(txt).width + 44;
+          const w = ctx.measureText(txt).width + 40;
           if (px + w > STORY_W - 110) {
             px = 120;
-            py += 74;
+            py += 64;
           }
-          if (py > 1280) return;
-          drawRoundedRect(ctx, px, py, w, 54, 27);
+          if (py > 980) return;
+          drawRoundedRect(ctx, px, py, w, 48, 24);
           ctx.fillStyle = "rgba(232,121,249,0.16)";
           ctx.fill();
           ctx.strokeStyle = "rgba(232,121,249,0.5)";
           ctx.lineWidth = 2;
           ctx.stroke();
           ctx.fillStyle = "#F5D0FE";
-          ctx.fillText(txt, px + 22, py + 36);
-          px += w + 16;
+          ctx.fillText(txt, px + 20, py + 32);
+          px += w + 14;
         });
       } else {
         ctx.fillStyle = "#64748B";
-        ctx.font = "600 28px -apple-system, BlinkMacSystemFont, sans-serif";
-        ctx.fillText("Ajoute des sous-genres à tes livres pour voir tes nuances favorites.", 120, 1085);
+        ctx.font = "600 26px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Ajoute des sous-genres pour voir tes nuances favorites.", 120, 895);
       }
 
-      // Bloc Formats (Papier / Liseuse / Audio)
-      drawRoundedRect(ctx, 80, 1390, STORY_W - 160, 310, 26);
+      // Bloc 3 : Taille des livres (Court / Moyen / Long / Pavé)
+      drawRoundedRect(ctx, 80, 1075, STORY_W - 160, 315, 26);
+      ctx.fillStyle = "rgba(30,41,59,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(52,211,153,0.32)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      const avgPagesPerBook = genreSourceBooks.length > 0 ? Math.round(sumBookPages / genreSourceBooks.length) : 0;
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#34D399";
+      ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("📏 TAILLE DES LIVRES", 120, 1132);
+      if (avgPagesPerBook > 0) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "700 24px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`Moy. ${avgPagesPerBook} pages/livre`, STORY_W - 120, 1132);
+      }
+
+      const totSized = Math.max(1, sizeMap.court + sizeMap.moyen + sizeMap.long + sizeMap.pave);
+      const sizeCards = [
+        { e: "⚡", lbl: "Court", sub: "< 300 p.", cnt: sizeMap.court, col: "#38BDF8" },
+        { e: "📖", lbl: "Moyen", sub: "300–499 p.", cnt: sizeMap.moyen, col: "#818CF8" },
+        { e: "📚", lbl: "Long", sub: "500–699 p.", cnt: sizeMap.long, col: "#E879F9" },
+        { e: "🧱", lbl: "Pavé", sub: "700+ p.", cnt: sizeMap.pave, col: "#FBBF24" }
+      ];
+      const scW = 198, scGap = 16, scStartX = 120;
+      sizeCards.forEach((sc, i) => {
+        const sx = scStartX + i * (scW + scGap);
+        const sy = 1165;
+        const pct = Math.round((sc.cnt / totSized) * 100);
+        drawRoundedRect(ctx, sx, sy, scW, 195, 18);
+        ctx.fillStyle = "rgba(15,23,42,0.72)";
+        ctx.fill();
+        ctx.strokeStyle = sc.cnt > 0 ? `${sc.col}66` : "rgba(148,163,184,0.16)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.textAlign = "center";
+        ctx.font = "34px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(sc.e, sx + scW / 2, sy + 48);
+
+        ctx.fillStyle = sc.cnt > 0 ? sc.col : "#64748B";
+        ctx.font = "800 40px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(String(sc.cnt), sx + scW / 2, sy + 102);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${sc.lbl} (${pct}%)`, sx + scW / 2, sy + 140);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "600 18px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(sc.sub, sx + scW / 2, sy + 170);
+      });
+
+      // Bloc 4 : Formats (Papier / Liseuse / Audio)
+      drawRoundedRect(ctx, 80, 1420, STORY_W - 160, 285, 26);
       ctx.fillStyle = "rgba(30,41,59,0.78)";
       ctx.fill();
       ctx.strokeStyle = "rgba(56,189,248,0.3)";
@@ -1224,8 +1307,8 @@
 
       ctx.textAlign = "left";
       ctx.fillStyle = "#38BDF8";
-      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText("📖 FORMATS DE LECTURE", 120, 1450);
+      ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("📖 FORMATS DE LECTURE", 120, 1478);
 
       const totFmt = Math.max(1, fmtMap.Papier + fmtMap.Liseuse + fmtMap.Audio);
       const fmtEntries = [
@@ -1238,7 +1321,7 @@
       fmtEntries.forEach((fe) => {
         if (fe.count <= 0) return;
         const w = Math.max(24, Math.round((fe.count / totFmt) * segW));
-        drawRoundedRect(ctx, curSegX, 1495, Math.min(w, 120 + segW - curSegX), 36, 12);
+        drawRoundedRect(ctx, curSegX, 1515, Math.min(w, 120 + segW - curSegX), 32, 12);
         ctx.fillStyle = fe.color;
         ctx.fill();
         curSegX += w + 6;
@@ -1248,14 +1331,14 @@
         const fx = 120 + i * 290;
         const pct = Math.round((fe.count / totFmt) * 100);
         ctx.fillStyle = fe.color;
-        ctx.font = "800 38px -apple-system, BlinkMacSystemFont, sans-serif";
-        ctx.fillText(`${pct}%`, fx, 1600);
+        ctx.font = "800 36px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${pct}%`, fx, 1612);
         ctx.fillStyle = "#CBD5E1";
-        ctx.font = "600 26px -apple-system, BlinkMacSystemFont, sans-serif";
-        ctx.fillText(`${fe.label} (${fe.count})`, fx, 1642);
+        ctx.font = "600 25px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${fe.label} (${fe.count})`, fx, 1652);
       });
 
-      drawBrandFooter(ctx, `Genres & Formats • ${periodLabel}`);
+      drawBrandFooter(ctx, `Genres & Tailles • ${periodLabel}`);
     }
 
     // ---------------------------------------------------------
@@ -1274,16 +1357,21 @@
       ctx.font = "800 64px -apple-system, BlinkMacSystemFont, sans-serif";
       ctx.fillText(`Temps forts ${periodLabel}`, STORY_W / 2, 205);
 
-      // Podium Top 3
-      const top3 = periodBooks.slice(0, 3);
+      // Podium Top 3 (ou livres lus sur la période si aucun terminé)
+      const activeIdsS4 = new Set(periodSessions.map((s) => Number(s.book_id)));
+      const podiumPool = periodBooks.length > 0
+        ? periodBooks
+        : books.filter((b) => activeIdsS4.has(Number(b.id))).sort((a, b) => Number(b.rating_global || 0) - Number(a.rating_global || 0));
+      const top3 = podiumPool.slice(0, 3);
       const medals = ["🥇", "🥈", "🥉"];
       if (top3.length > 0) {
-        const colW = 280, colGap = 35;
+        const colW = top3.length === 1 ? 420 : 280;
+        const colGap = 35;
         const startX = (STORY_W - (top3.length * colW + (top3.length - 1) * colGap)) / 2;
         top3.forEach((b, i) => {
           const bx = startX + i * (colW + colGap);
           const by = i === 0 ? 275 : 320;
-          const cw = i === 0 ? 260 : 230;
+          const cw = top3.length === 1 ? 280 : (i === 0 ? 260 : 230);
           const ch = Math.round(cw * 1.48);
           const cx = bx + (colW - cw) / 2;
 
@@ -1294,22 +1382,22 @@
           drawCoverFit(ctx, b.cover_url ? imgCache[b.cover_url] : null, cx, by + 42, cw, ch, 16, b.title);
 
           ctx.fillStyle = "#F8FAFC";
-          ctx.font = "700 24px -apple-system, BlinkMacSystemFont, sans-serif";
-          wrapText(ctx, b.title, bx + colW / 2, by + ch + 82, colW, 30, 2);
+          ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+          wrapText(ctx, b.title, bx + colW / 2, by + ch + 82, colW, 32, 2);
 
           if (Number(b.rating_global || 0) > 0) {
             ctx.fillStyle = "#FBBF24";
-            ctx.font = "800 28px -apple-system, BlinkMacSystemFont, sans-serif";
+            ctx.font = "800 30px -apple-system, BlinkMacSystemFont, sans-serif";
             ctx.fillText(`★ ${b.rating_global}/5`, bx + colW / 2, by + ch + 150);
           }
         });
       }
 
       // Records de la période
-      const biggestBook = [...periodBooks].sort((a, b) => Number(b.page_count || 0) - Number(a.page_count || 0))[0] || null;
+      const biggestBook = [...podiumPool].sort((a, b) => Number(b.page_count || 0) - Number(a.page_count || 0))[0] || null;
       const dayPagesMap = {};
       const slotCounts = [0, 0, 0, 0, 0];
-      const slotLabels = ["🌅 Matin", "☀️ Midi", "🌤️ Après-midi", "🌆 Soirée", "🌙 Nocturne"];
+      const slotLabels = ["🌅 Matin (5h–11h)", "☀️ Midi (11h–14h)", "🌤️ Après-midi (14h–18h)", "🌆 Soirée (18h–22h)", "🌙 Nocturne (22h–5h)"];
       periodSessions.forEach((s) => {
         const dt = new Date(s.start_time);
         if (!isNaN(dt.getTime())) {
@@ -1322,17 +1410,20 @@
       });
       const bestDay = Object.entries(dayPagesMap).sort((a, b) => b[1] - a[1])[0] || null;
       const bestSlotIdx = slotCounts.indexOf(Math.max(...slotCounts));
-      const totalSpent = periodBooks.reduce((a, b) => a + Number(b.price || 0), 0);
+      const totalSpent = podiumPool.reduce((a, b) => a + Number(b.price || 0), 0);
       const costPerHour = totalSpent > 0 && totHours > 0 ? (totalSpent / totHours).toFixed(2) : null;
+      const avgPagesPerSess = periodSessions.length > 0 ? Math.round(totPages / periodSessions.length) : 0;
 
       const records = [
         { k: "📏 PLUS GROS PAVÉ", v: biggestBook ? `${biggestBook.title} (${biggestBook.page_count} p.)` : "—" },
         { k: "🔥 PLUS GROSSE JOURNÉE", v: bestDay && bestDay[1] > 0 ? `+${bestDay[1]} pages le ${bestDay[0]}` : "—" },
         { k: "🕒 CRÉNEAU FAVORI", v: slotCounts[bestSlotIdx] > 0 ? slotLabels[bestSlotIdx] : "—" },
-        { k: "🎬 COÛT / HEURE DE PLAISIR", v: costPerHour ? `${costPerHour} € / heure` : `${periodSessions.length} sessions enregistrées` }
+        costPerHour
+          ? { k: "🎬 COÛT / HEURE DE PLAISIR", v: `${costPerHour} € / heure (${totalSpent.toFixed(0)} €)` }
+          : { k: "📖 RYTHME DES SESSIONS", v: `${periodSessions.length} sessions • ${avgPagesPerSess} pages / session` }
       ];
 
-      let ry = 955;
+      let ry = top3.length > 0 ? 955 : 340;
       records.forEach((rec) => {
         drawRoundedRect(ctx, 80, ry, STORY_W - 160, 160, 22);
         ctx.fillStyle = "rgba(30,41,59,0.82)";

@@ -5159,12 +5159,14 @@ window.saveBookEdits = async function (bookId) {
   const audioTotalMin = (fmt === "Audio" && (aTH > 0 || aTM > 0)) ? Math.round(aTH * 60 + aTM) : null;
   const audioCurMin = fmt === "Audio" ? Math.round(aCH * 60 + aCM) : 0;
 
+  const existingBook = state.books.find((b) => b.id === Number(bookId));
+  const newStatus = g("m-ed-status");
   const data = {
     title: g("m-ed-title").trim(),
     author: g("m-ed-author").trim(),
     series_name: g("m-ed-series").trim() || null,
     series_volume: g("m-ed-vol") !== "" ? Number(g("m-ed-vol")) : null,
-    status: g("m-ed-status"),
+    status: newStatus,
     current_page: Number(g("m-ed-page") || 0),
     page_count: Math.max(1, Number(g("m-ed-totpages") || 1)),
     format: fmt,
@@ -5180,6 +5182,9 @@ window.saveBookEdits = async function (bookId) {
     fantasy_subgenre: g("m-ed-subg").split(",").map((s) => s.trim()).filter(Boolean),
     cover_url: g("m-ed-cover").trim() || null
   };
+  if (newStatus === "Terminé" && (!existingBook || !existingBook.finished_at)) {
+    data.finished_at = new Date().toISOString().slice(0, 10);
+  }
 
   window.closeModal();
   await apiCall("update_book", { book_id: bookId, data });
