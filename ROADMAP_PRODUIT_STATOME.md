@@ -6,9 +6,7 @@
 
 ## 🎯 P1 — Indispensables avant le lancement payant (Adoption & Support)
 
-- [ ] **Import CSV en 1 clic (Goodreads / StoryGraph / Babelio / générique)**
-  - *Besoin* : supprimer le « syndrome de la page blanche » pour les lecteurs qui ont déjà 50 à 300 livres ailleurs.
-  - *Bénéfice* : un nouvel utilisateur retrouve sa bibliothèque et son historique en 30 secondes.
+- [x] **Import CSV en 1 clic (Goodreads / StoryGraph / Babelio / générique)** *(livré sur `staging` — auto-détection encodage & séparateur, dédoublonnage, guide export intégré, enrichissement progressif couvertures/genres dans `👤 Mon Compte`)*
 - [ ] **Mot de passe oublié & gestion du mot de passe**
   - *Besoin* : indispensable dès l'ouverture commerciale pour éviter qu'un client payant soit bloqué.
   - *Piste technique* : réinitialisation par email (ex. Resend / Brevo, offre gratuite) + changement de mot de passe dans `👤 Mon Compte`.

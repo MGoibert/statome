@@ -1927,6 +1927,113 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       return { status: 200, data: { ok: true } };
     }
 
+    if (action === "import_books_batch") {
+      await ensureGoalsSchema(connStr);
+      const rawList = Array.isArray(body.books) ? body.books.slice(0, 500) : [];
+      if (rawList.length === 0) {
+        return { status: 400, data: { ok: false, error: "Aucun livre à importer." } };
+      }
+
+      const existingRows = await neonQuery(connStr, "SELECT isbn, title, author FROM books WHERE user_id = $1", [userId]);
+      const existingIsbns = new Set();
+      const existingKeys = new Set();
+      for (const ex of existingRows) {
+        const cIsbn = String(ex.isbn || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+        if (cIsbn.length >= 10) existingIsbns.add(cIsbn);
+        const k = `${normStr(ex.title || "")}|${authorLastNameToken(ex.author || "")}`;
+        if (k.length > 2) existingKeys.add(k);
+      }
+
+      const importedIds = [];
+      let skippedCount = 0;
+
+      for (const b of rawList) {
+        const title = String(b.title || "").trim();
+        if (!title) {
+          skippedCount++;
+          continue;
+        }
+        const author = String(b.author || "Auteur inconnu").trim() || "Auteur inconnu";
+        const isbn = String(b.isbn || "").replace(/[^0-9Xx]/g, "").toUpperCase();
+        const key = `${normStr(title)}|${authorLastNameToken(author)}`;
+
+        if ((isbn.length >= 10 && existingIsbns.has(isbn)) || existingKeys.has(key)) {
+          skippedCount++;
+          continue;
+        }
+
+        const status = ["Bibliothèque", "En cours", "Wishlist", "À acheter", "Terminé", "DNF"].includes(b.status)
+          ? b.status
+          : "Bibliothèque";
+        const pageCount = Math.max(1, Number(b.page_count || 300));
+        const curPage = status === "Terminé" ? pageCount : Math.max(0, Number(b.current_page || 0));
+        const finishedAt = b.finished_at && /^\d{4}-\d{2}-\d{2}$/.test(String(b.finished_at))
+          ? String(b.finished_at)
+          : null;
+        const startedAt = status === "En cours" ? new Date().toISOString().slice(0, 10) : (finishedAt || null);
+        const ratingGlobal = b.rating_global !== null && b.rating_global !== undefined && Number(b.rating_global) > 0
+          ? Math.min(5, Math.max(0.25, Math.round(Number(b.rating_global) * 4) / 4))
+          : null;
+        const pubYear = b.publication_year && Number(b.publication_year) >= 1400 && Number(b.publication_year) <= 2100
+          ? Number(b.publication_year)
+          : null;
+        const genresJson = JSON.stringify(Array.isArray(b.genres) && b.genres.length > 0 ? b.genres : []);
+        const tagsJson = JSON.stringify(Array.isArray(b.tags) ? b.tags : []);
+        const subgJson = JSON.stringify(Array.isArray(b.fantasy_subgenres) ? b.fantasy_subgenres : []);
+        const { seriesName, seriesVolume } = extractSeriesInfo(title);
+        const cleanTitle = cleanTitleFromSeries(title) || title;
+
+        const rows = await neonQuery(
+          connStr,
+          `INSERT INTO books
+           (user_id, isbn, title, series_name, series_volume, author, author_country, publisher, publication_year,
+            page_count, format, genres, tags, fantasy_subgenre, popularity_score, cover_url,
+            status, current_page, started_at, finished_at, rating_global, final_review)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+           RETURNING id`,
+          [
+            userId,
+            isbn.length >= 10 ? isbn : null,
+            cleanTitle,
+            b.series_name || seriesName || null,
+            b.series_volume ? Number(b.series_volume) : seriesVolume,
+            author,
+            b.author_country || "France",
+            b.publisher ? String(b.publisher).trim() : null,
+            pubYear,
+            pageCount,
+            ["Broché", "Poche", "Relié", "Numérique", "Audio"].includes(b.format) ? b.format : "Broché",
+            genresJson,
+            tagsJson,
+            subgJson,
+            b.popularity_score && Number(b.popularity_score) > 0 ? Number(b.popularity_score) : null,
+            b.cover_url || null,
+            status,
+            curPage,
+            startedAt,
+            finishedAt,
+            ratingGlobal,
+            b.final_review ? String(b.final_review).trim().slice(0, 4000) : null
+          ]
+        );
+        if (rows[0] && rows[0].id) {
+          importedIds.push(Number(rows[0].id));
+          if (isbn.length >= 10) existingIsbns.add(isbn);
+          existingKeys.add(key);
+        }
+      }
+
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          imported_count: importedIds.length,
+          skipped_count: skippedCount,
+          imported_ids: importedIds
+        }
+      };
+    }
+
     if (action === "add_book") {
       await ensureGoalsSchema(connStr);
       const genresJson = JSON.stringify(Array.isArray(body.genres) ? body.genres : parseJsonArray(body.genres || "Fantasy"));

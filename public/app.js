@@ -2518,6 +2518,10 @@ function renderAddView() {
       <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;" onclick="window.submitNewBook()">
         💾 Enregistrer dans ma bibliothèque
       </button>
+      <div style="text-align:center;margin-top:12px;font-size:0.78rem;color:var(--muted);">
+        Déjà une bibliothèque sur Goodreads, StoryGraph ou Babelio ?
+        <a href="#" onclick="event.preventDefault();window.openCsvImportModal();" style="color:var(--primary-light);font-weight:700;text-decoration:none;">📥 Importer un CSV</a>
+      </div>
     </div>
   `;
 }
@@ -4623,6 +4627,7 @@ function renderStatsDnaTab() {
 // 5. MODALES (NOTATION MULTI-CRITÈRES + FICHE 3 ONGLETS)
 // ==========================================
 window.state = state;
+window.apiCall = apiCall;
 function openModal(html) {
   const dlg = document.getElementById("app-modal");
   document.getElementById("modal-content").innerHTML = html;
@@ -5455,9 +5460,10 @@ window.openAccountModal = async function () {
         🛡️ Bibliothèque personnelle isolée (${state.books.length} livres • ${state.sessions.length} sessions)
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">
-        <button class="btn" style="font-size:0.8rem;padding:9px;" onclick="window.exportLibraryCsv()">📥 Exporter CSV</button>
-        <button class="btn btn-danger" style="font-size:0.8rem;padding:9px;" onclick="window.logoutUser()">🚪 Déconnexion</button>
+        <button class="btn btn-primary" style="font-size:0.8rem;padding:9px;" onclick="window.openCsvImportModal()">📥 Importer CSV</button>
+        <button class="btn" style="font-size:0.8rem;padding:9px;" onclick="window.exportLibraryCsv()">📤 Exporter CSV</button>
       </div>
+      <button class="btn btn-danger" style="width:100%;margin-top:8px;font-size:0.8rem;padding:9px;" onclick="window.logoutUser()">🚪 Déconnexion</button>
       ${!isAdmin ? `
         <button class="btn btn-danger" style="width:100%;margin-top:8px;font-size:0.76rem;padding:8px;" onclick="window.deleteMyBetaAccount()">
           🗑️ Supprimer définitivement mon compte et mes données
