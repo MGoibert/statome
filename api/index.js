@@ -963,138 +963,37 @@ function looksFrenchTitle(title = "") {
 async function fetchQuickAutocomplete(queryStr) {
   const q = String(queryStr || "").trim();
   if (q.length < 2 || /^https?:\/\//i.test(q)) return [];
-
-  const fetchAppleBooksFr = async () => {
-    try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=fr&media=ebook&limit=10`;
-      const resp = await fetch(url, { headers: DEFAULT_HEADERS });
-      if (!resp.ok) return [];
-      const json = await resp.json();
-      const items = (json && json.results) || [];
-      return items
-        .map((it, idx) => {
-          const rawTitle = String(it.trackName || "").trim();
-          if (!rawTitle) return null;
-          if (/^(?:résumé|resume|fiche de lecture|analyse complète|summary of|study guide)\b/i.test(rawTitle)) return null;
-          const cleanedRaw = rawTitle
-            .replace(/\s*\((?:Enhanced Edition|Édition enrichie|Edition enrichie|French Edition|Édition française)\)\s*/gi, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-          const { seriesName, seriesVolume } = extractSeriesInfo(cleanedRaw);
-          const bareTitle = cleanTitleFromSeries(cleanedRaw) || cleanedRaw;
-          let author = String(it.artistName || "").trim();
-          // Apple Books liste souvent "Auteur & Traducteur"
-          if (author.includes(" & ") && Array.isArray(it.artistIds) && it.artistIds.length > 1) {
-            author = author.split(" & ")[0].trim();
-          }
-          const rawArt = String(it.artworkUrl100 || "");
-          const cover = rawArt ? rawArt.replace(/100x100bb/i, "400x400bb") : "";
-          const rating = Number(it.averageUserRating || 0) > 0 ? Math.round(Number(it.averageUserRating) * 100) / 100 : null;
-          const ratingCnt = Number(it.userRatingCount || 0);
-          const isFr = looksFrenchTitle(cleanedRaw);
-          // Score combinant popularité réelle Apple FR + titre français + rang naturel
-          const score =
-            (isFr ? 5 : 0) +
-            (ratingCnt > 0 ? Math.min(8, Math.log10(ratingCnt + 1) * 2.5) : 0) +
-            (rating ? 2 : 0) +
-            (cover ? 1 : 0) +
-            Math.max(0, (10 - idx) * 0.45);
-          return {
-            title: bareTitle,
-            author,
-            cover_url: cover,
-            isbn: "",
-            popularity_score: rating,
-            page_count: null,
-            series_name: seriesName || "",
-            series_volume: seriesVolume,
-            is_fr: isFr,
-            _score: score
-          };
-        })
-        .filter(Boolean)
-        .sort((a, b) => b._score - a._score);
-    } catch {
-      return [];
-    }
-  };
-
-  const fetchGoodreads = async () => {
-    try {
-      const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q)}`;
-      const resp = await fetch(url, { headers: DEFAULT_HEADERS });
-      if (!resp.ok) return [];
-      const items = await resp.json();
-      if (!Array.isArray(items)) return [];
-      return items.slice(0, 8).map((it) => {
-        const rawTitle = unescapeHtml(it.title || "");
-        const bareTitle = cleanTitleFromSeries(it.bookTitleBare || rawTitle) || rawTitle;
-        const { seriesName, seriesVolume } = extractSeriesInfo(rawTitle);
-        const imgUrl = String(it.imageUrl || "");
-        const cover = imgUrl && !imgUrl.includes("nophoto")
-          ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
-          : "";
-        const isFr = looksFrenchTitle(rawTitle);
-        return {
-          title: bareTitle,
-          author: unescapeHtml((it.author && it.author.name) || ""),
-          cover_url: cover,
-          isbn: "",
-          popularity_score: Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null,
-          page_count: Number(it.numPages || 0) > 0 ? Number(it.numPages) : null,
-          series_name: seriesName || "",
-          series_volume: seriesVolume,
-          is_fr: isFr
-        };
-      }).filter((x) => x.title);
-    } catch {
-      return [];
-    }
-  };
-
-  const [appleFr, grItems] = await Promise.all([fetchAppleBooksFr(), fetchGoodreads()]);
-
-  const merged = [];
-  const seen = new Set();
-  const makeKey = (it) => `${normStr(it.title)}|${authorLastNameToken(it.author)}`;
-
-  const pushUnique = (item) => {
-    const k = makeKey(item);
-    if (seen.has(k)) return;
-    seen.add(k);
-    const { _score, ...cleanItem } = item;
-    merged.push(cleanItem);
-  };
-
-  // 1. Meilleurs résultats français Apple Books FR (classés par popularité réelle FR)
-  for (const a of appleFr.filter((x) => x.is_fr)) {
-    const ak = makeKey(a);
-    const grMatch = grItems.find((r) => makeKey(r) === ak);
-    if (grMatch) {
-      if (grMatch.popularity_score) a.popularity_score = grMatch.popularity_score;
-      if (!a.series_name && grMatch.series_name) {
-        a.series_name = grMatch.series_name;
-        a.series_volume = grMatch.series_volume;
-      }
-      if (!a.page_count && grMatch.page_count) a.page_count = grMatch.page_count;
-    }
-    pushUnique(a);
+  try {
+    const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q)}`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+    if (!resp.ok) return [];
+    const items = await resp.json();
+    if (!Array.isArray(items)) return [];
+    const mapped = items.slice(0, 8).map((it) => {
+      const rawTitle = unescapeHtml(it.title || "");
+      const bareTitle = cleanTitleFromSeries(it.bookTitleBare || rawTitle) || rawTitle;
+      const { seriesName, seriesVolume } = extractSeriesInfo(rawTitle);
+      const imgUrl = String(it.imageUrl || "");
+      const cover = imgUrl && !imgUrl.includes("nophoto")
+        ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
+        : "";
+      return {
+        title: bareTitle,
+        author: unescapeHtml((it.author && it.author.name) || ""),
+        cover_url: cover,
+        isbn: "",
+        popularity_score: Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null,
+        page_count: Number(it.numPages || 0) > 0 ? Number(it.numPages) : null,
+        series_name: seriesName || "",
+        series_volume: seriesVolume,
+        is_fr: looksFrenchTitle(rawTitle)
+      };
+    }).filter((x) => x.title);
+    // Favoriser les résultats français Goodreads d'abord
+    return [...mapped.filter((x) => x.is_fr), ...mapped.filter((x) => !x.is_fr)].slice(0, 6);
+  } catch {
+    return [];
   }
-
-  // 2. Résultats Goodreads détectés en français
-  for (const r of grItems.filter((x) => x.is_fr)) {
-    pushUnique(r);
-  }
-
-  // 3. Complément populaire (Goodreads puis reste Apple Books) s'il reste de la place
-  for (const r of grItems.filter((x) => !x.is_fr)) {
-    pushUnique(r);
-  }
-  for (const a of appleFr.filter((x) => !x.is_fr)) {
-    pushUnique(a);
-  }
-
-  return merged.slice(0, 6);
 }
 
 async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {

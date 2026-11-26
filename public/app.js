@@ -3374,12 +3374,18 @@ window.onExtSearchInput = function (val) {
   const seq = ++extAutocompleteSeq;
   extAutocompleteTimer = setTimeout(async () => {
     try {
-      const [appleItems, apiRes] = await Promise.all([
-        fetchAppleBooksFrClient(q),
-        apiCall("quick_autocomplete", { q }).catch(() => ({ suggestions: [] }))
-      ]);
+      const appleItems = await fetchAppleBooksFrClient(q);
       if (seq !== extAutocompleteSeq) return;
-      const serverItems = (apiRes && apiRes.suggestions) || [];
+      const appleFr = appleItems.filter((x) => x.is_fr);
+
+      let serverItems = [];
+      // Optimisation scalabilité : on n'appelle le Worker (Goodreads) qu'en renfort si Apple Books FR renvoie < 3 résultats
+      if (appleFr.length < 3) {
+        const apiRes = await apiCall("quick_autocomplete", { q }).catch(() => ({ suggestions: [] }));
+        if (seq !== extAutocompleteSeq) return;
+        serverItems = (apiRes && apiRes.suggestions) || [];
+      }
+
       const merged = [];
       const seen = new Set();
       const normKey = (it) =>
@@ -3391,10 +3397,9 @@ window.onExtSearchInput = function (val) {
         merged.push(item);
       };
       // 1. Éditions françaises populaires (Apple Books FR en direct du navigateur)
-      for (const a of appleItems.filter((x) => x.is_fr)) pushUnique(a);
-      // 2. Résultats français Goodreads / serveur
+      for (const a of appleFr) pushUnique(a);
+      // 2. Renfort serveur (Goodreads FR puis international) uniquement si besoin
       for (const s of serverItems.filter((x) => x.is_fr || looksFrenchText(x.title))) pushUnique(s);
-      // 3. Complément populaire international s'il reste de la place
       for (const s of serverItems) pushUnique(s);
       for (const a of appleItems) pushUnique(a);
 
