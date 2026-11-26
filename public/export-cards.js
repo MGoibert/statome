@@ -503,6 +503,32 @@
     return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
   }
 
+  function updateCarouselUiState() {
+    const slide = carouselSlides[carouselIdx];
+    const lblEl = document.getElementById("story-carousel-label");
+    if (lblEl && slide) {
+      lblEl.textContent = `${slide.label} (${carouselIdx + 1}/${carouselSlides.length})`;
+    }
+    document.querySelectorAll(".story-carousel-dot").forEach((dot, i) => {
+      dot.style.width = i === carouselIdx ? "18px" : "7px";
+      dot.style.background = i === carouselIdx ? "#818CF8" : "rgba(148,163,184,0.35)";
+    });
+  }
+
+  let carouselScrollTick = null;
+  window.onStoryCarouselScroll = function (el) {
+    if (!el || carouselSlides.length <= 1) return;
+    if (carouselScrollTick) clearTimeout(carouselScrollTick);
+    carouselScrollTick = setTimeout(() => {
+      const w = el.clientWidth || 1;
+      const newIdx = Math.max(0, Math.min(carouselSlides.length - 1, Math.round(el.scrollLeft / w)));
+      if (newIdx !== carouselIdx) {
+        carouselIdx = newIdx;
+        updateCarouselUiState();
+      }
+    }, 60);
+  };
+
   function renderCarouselModalBody() {
     const slide = carouselSlides[carouselIdx];
     if (!slide) return;
@@ -513,10 +539,10 @@
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
         <button class="btn" style="padding:5px 12px;font-size:0.8rem;" onclick="window.shiftStorySlide(-1)">◀️ Préc.</button>
         <div style="text-align:center;">
-          <div style="font-size:0.78rem;font-weight:700;color:var(--primary-light);">${slide.label} (${carouselIdx + 1}/${total})</div>
+          <div id="story-carousel-label" style="font-size:0.78rem;font-weight:700;color:var(--primary-light);">${slide.label} (${carouselIdx + 1}/${total})</div>
           <div style="display:flex;justify-content:center;gap:6px;margin-top:4px;">
             ${carouselSlides.map((_, i) => `
-              <span onclick="window.setStorySlide(${i})" style="cursor:pointer;width:${i === carouselIdx ? "18px" : "7px"};height:7px;border-radius:999px;background:${i === carouselIdx ? "#818CF8" : "rgba(148,163,184,0.35)"};transition:all 0.2s;"></span>
+              <span class="story-carousel-dot" onclick="window.setStorySlide(${i})" style="cursor:pointer;width:${i === carouselIdx ? "18px" : "7px"};height:7px;border-radius:999px;background:${i === carouselIdx ? "#818CF8" : "rgba(148,163,184,0.35)"};transition:all 0.2s;"></span>
             `).join("")}
           </div>
         </div>
@@ -537,8 +563,12 @@
         <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
       </div>
       ${navHtml}
-      <div style="display:flex;justify-content:center;background:#070B14;border-radius:12px;padding:8px;border:1px solid var(--border);">
-        <img src="${slide.dataUrl}" alt="Aperçu Story" style="max-height:54vh;max-width:100%;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.6);" />
+      <div id="story-carousel-track" onscroll="window.onStoryCarouselScroll(this)" style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:#070B14;border-radius:12px;border:1px solid var(--border);">
+        ${carouselSlides.map((s) => `
+          <div style="flex:0 0 100%;width:100%;scroll-snap-align:center;display:flex;justify-content:center;align-items:center;padding:8px;box-sizing:border-box;">
+            <img src="${s.dataUrl}" alt="${s.label}" style="max-height:54vh;max-width:100%;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.6);pointer-events:none;user-select:none;" />
+          </div>
+        `).join("")}
       </div>
       ${multiShareHtml}
       <div style="display:grid;grid-template-columns:${canShare ? "1fr 1fr" : "1fr"};gap:8px;margin-top:8px;">
@@ -546,7 +576,7 @@
         <button class="btn ${!canShare && total === 1 ? "btn-primary" : ""}" style="padding:9px;font-size:0.82rem;" onclick="window.downloadCurrentStorySlide()">⬇️ ${total > 1 ? "Télécharger cette slide" : "Télécharger PNG"}</button>
       </div>
       <div style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:7px;">
-        Format HD 1080×1920 prêt pour Instagram / TikTok / WhatsApp.
+        ${total > 1 ? "👈 Glissez horizontalement pour parcourir les slides • " : ""}Format HD 1080×1920 prêt pour Instagram / TikTok.
       </div>
     `);
   }
@@ -572,13 +602,17 @@
   window.setStorySlide = function (idx) {
     if (idx < 0 || idx >= carouselSlides.length) return;
     carouselIdx = idx;
-    renderCarouselModalBody();
+    updateCarouselUiState();
+    const track = document.getElementById("story-carousel-track");
+    if (track) {
+      track.scrollTo({ left: idx * track.clientWidth, behavior: "smooth" });
+    }
   };
 
   window.shiftStorySlide = function (delta) {
     if (carouselSlides.length <= 1) return;
-    carouselIdx = (carouselIdx + delta + carouselSlides.length) % carouselSlides.length;
-    renderCarouselModalBody();
+    const nextIdx = (carouselIdx + delta + carouselSlides.length) % carouselSlides.length;
+    window.setStorySlide(nextIdx);
   };
 
   function triggerBlobDownload(blob, filename) {
