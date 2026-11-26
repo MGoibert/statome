@@ -3297,6 +3297,69 @@ function renderAutocompleteBox() {
   `;
 }
 
+function looksFrenchText(text = "") {
+  const s = String(text || "");
+  if (/[éèêëàâäîïôöùûüçœæ]/i.test(s)) return true;
+  if (/\b(?:le|la|les|des|du|un|une|tome|livre|l'|d'|aux|dans|pour|sur|avec|sans|roman|édition|français)\b/i.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+async function fetchAppleBooksFrClient(q) {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=fr&media=ebook&limit=10`;
+    const resp = await fetch(url);
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    const items = (json && json.results) || [];
+    return items
+      .map((it, idx) => {
+        const rawTitle = String(it.trackName || "").trim();
+        if (!rawTitle) return null;
+        if (/^(?:résumé|resume|fiche de lecture|analyse complète|summary of|study guide)\b/i.test(rawTitle)) return null;
+        const cleanedRaw = rawTitle
+          .replace(/\s*\((?:Enhanced Edition|Édition enrichie|Edition enrichie|French Edition|Édition française)\)\s*/gi, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        let author = String(it.artistName || "").trim();
+        if (author.includes(" & ") && Array.isArray(it.artistIds) && it.artistIds.length > 1) {
+          author = author.split(" & ")[0].trim();
+        }
+        const rawArt = String(it.artworkUrl100 || "");
+        const cover = rawArt ? rawArt.replace(/100x100bb/i, "400x400bb") : "";
+        const rating = Number(it.averageUserRating || 0) > 0 ? Math.round(Number(it.averageUserRating) * 100) / 100 : null;
+        const ratingCnt = Number(it.userRatingCount || 0);
+        const descSample = String(it.description || "").slice(0, 260);
+        const isFrTitle = looksFrenchText(cleanedRaw);
+        const isFrEdition = isFrTitle || looksFrenchText(descSample);
+        const score =
+          (isFrEdition ? 6 : 0) +
+          (isFrTitle ? 2 : 0) +
+          (ratingCnt > 0 ? Math.min(8, Math.log10(ratingCnt + 1) * 2.5) : 0) +
+          (rating ? 2 : 0) +
+          (cover ? 1 : 0) +
+          Math.max(0, (10 - idx) * 0.45);
+        return {
+          title: cleanedRaw,
+          author,
+          cover_url: cover,
+          isbn: "",
+          popularity_score: rating,
+          page_count: null,
+          series_name: "",
+          series_volume: null,
+          is_fr: isFrEdition,
+          _score: score
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b._score - a._score);
+  } catch {
+    return [];
+  }
+}
+
 window.onExtSearchInput = function (val) {
   state.extSearchQuery = val;
   const q = String(val || "").trim();
@@ -3311,12 +3374,34 @@ window.onExtSearchInput = function (val) {
   const seq = ++extAutocompleteSeq;
   extAutocompleteTimer = setTimeout(async () => {
     try {
-      const res = await apiCall("quick_autocomplete", { q });
+      const [appleItems, apiRes] = await Promise.all([
+        fetchAppleBooksFrClient(q),
+        apiCall("quick_autocomplete", { q }).catch(() => ({ suggestions: [] }))
+      ]);
       if (seq !== extAutocompleteSeq) return;
-      state.autocompleteResults = (res && res.suggestions) || [];
+      const serverItems = (apiRes && apiRes.suggestions) || [];
+      const merged = [];
+      const seen = new Set();
+      const normKey = (it) =>
+        `${String(it.title || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "").slice(0, 28)}|${String(it.author || "").toLowerCase().split(/\s+/).pop() || ""}`;
+      const pushUnique = (item) => {
+        const k = normKey(item);
+        if (seen.has(k)) return;
+        seen.add(k);
+        merged.push(item);
+      };
+      // 1. Éditions françaises populaires (Apple Books FR en direct du navigateur)
+      for (const a of appleItems.filter((x) => x.is_fr)) pushUnique(a);
+      // 2. Résultats français Goodreads / serveur
+      for (const s of serverItems.filter((x) => x.is_fr || looksFrenchText(x.title))) pushUnique(s);
+      // 3. Complément populaire international s'il reste de la place
+      for (const s of serverItems) pushUnique(s);
+      for (const a of appleItems) pushUnique(a);
+
+      state.autocompleteResults = merged.slice(0, 6);
       renderAutocompleteBox();
     } catch {}
-  }, 320);
+  }, 300);
 };
 
 window.onExtSearchPaste = function (event) {
