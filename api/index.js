@@ -1128,6 +1128,7 @@ async function ensureGoalsSchema(connStr) {
   await Promise.all([
     neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS annual_books_goal INTEGER DEFAULT 24").catch(() => {}),
     neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_minutes_goal INTEGER DEFAULT 30").catch(() => {}),
+    neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS goals_config TEXT").catch(() => {}),
     neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS target_finish_date TEXT").catch(() => {})
   ]);
   goalsSchemaReady = true;
@@ -1435,13 +1436,18 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         neonQuery(connStr, "SELECT * FROM reading_sessions WHERE user_id = $1 ORDER BY start_time DESC", [userId]),
         neonQuery(connStr, "SELECT * FROM book_notes WHERE user_id = $1 ORDER BY page_number ASC NULLS LAST, created_at DESC", [userId]),
         neonQuery(connStr, "SELECT * FROM active_timer WHERE id = $1 OR user_id = $1 ORDER BY updated_at DESC LIMIT 1", [userId]).catch(() => []),
-        neonQuery(connStr, "SELECT annual_books_goal, daily_minutes_goal FROM users WHERE id = $1 LIMIT 1", [userId]).catch(() => [])
+        neonQuery(connStr, "SELECT annual_books_goal, daily_minutes_goal, goals_config FROM users WHERE id = $1 LIMIT 1", [userId]).catch(() => [])
       ]);
 
       const uRow = (rawUser && rawUser[0]) || {};
+      let goalsConfig = null;
+      if (uRow.goals_config) {
+        try { goalsConfig = JSON.parse(uRow.goals_config); } catch {}
+      }
       const goals = {
         annual_books: Number(uRow.annual_books_goal || 24),
-        daily_minutes: Number(uRow.daily_minutes_goal || 30)
+        daily_minutes: Number(uRow.daily_minutes_goal || 30),
+        config: goalsConfig
       };
 
       const books = rawBooks.map(normalizeBook);
@@ -1484,12 +1490,13 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       await ensureGoalsSchema(connStr);
       const annualBooks = Math.max(1, Math.min(500, Number(body.annual_books || 24)));
       const dailyMinutes = Math.max(5, Math.min(600, Number(body.daily_minutes || 30)));
+      const configJson = body.config ? JSON.stringify(body.config) : null;
       await neonQuery(
         connStr,
-        "UPDATE users SET annual_books_goal = $1, daily_minutes_goal = $2 WHERE id = $3",
-        [annualBooks, dailyMinutes, userId]
+        "UPDATE users SET annual_books_goal = $1, daily_minutes_goal = $2, goals_config = COALESCE($3, goals_config) WHERE id = $4",
+        [annualBooks, dailyMinutes, configJson, userId]
       );
-      return { status: 200, data: { ok: true, goals: { annual_books: annualBooks, daily_minutes: dailyMinutes } } };
+      return { status: 200, data: { ok: true, goals: { annual_books: annualBooks, daily_minutes: dailyMinutes, config: body.config || null } } };
     }
 
     if (action === "save_timer") {

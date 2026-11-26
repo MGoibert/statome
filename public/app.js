@@ -241,6 +241,39 @@ let state = {
 // ==========================================
 // CACHE & SYNC ENGINE
 // ==========================================
+function createDefaultGoalsConfig(annualBooks = 24, dailyMinutes = 30) {
+  return {
+    streak_mode: "daily", // "daily" | "weekly"
+    weekly_days_target: 4,
+    items: [
+      { id: "g_year_books", enabled: true, pinned: true, metric: "books", period: "year", target: Number(annualBooks || 24), label: "Livres cette année" },
+      { id: "g_daily_min", enabled: true, pinned: true, metric: "minutes", period: "day", target: Number(dailyMinutes || 30), label: "Lecture quotidienne" },
+      { id: "g_year_pages", enabled: false, pinned: false, metric: "pages", period: "year", target: 10000, label: "Pages cette année" },
+      { id: "g_week_hours", enabled: false, pinned: false, metric: "hours", period: "week", target: 4, label: "Heures cette semaine" }
+    ],
+    challenges: [
+      { id: "ch_countries", enabled: true, type: "countries", target: 5, label: "🌍 Tour du monde (pays d'auteurs)" },
+      { id: "ch_genres", enabled: true, type: "genres", target: 4, label: "🎨 Explorateur (genres différents)" },
+      { id: "ch_subgenres", enabled: false, type: "subgenres", target: 6, label: "✨ Curieux (sous-genres)" },
+      { id: "ch_pal", enabled: false, type: "pal_finished", target: 12, label: "📚 Défi PAL (livres PAL terminés)" }
+    ]
+  };
+}
+
+function normalizeGoalsConfig(rawGoals) {
+  const annual = Number((rawGoals && rawGoals.annual_books) || 24);
+  const daily = Number((rawGoals && rawGoals.daily_minutes) || 30);
+  const base = createDefaultGoalsConfig(annual, daily);
+  const cfg = rawGoals && rawGoals.config && typeof rawGoals.config === "object" ? rawGoals.config : null;
+  if (!cfg) return base;
+  return {
+    streak_mode: cfg.streak_mode === "weekly" ? "weekly" : "daily",
+    weekly_days_target: Math.max(1, Math.min(7, Number(cfg.weekly_days_target || 4))),
+    items: Array.isArray(cfg.items) && cfg.items.length > 0 ? cfg.items : base.items,
+    challenges: Array.isArray(cfg.challenges) && cfg.challenges.length > 0 ? cfg.challenges : base.challenges
+  };
+}
+
 function loadLocalCache() {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -252,7 +285,8 @@ function loadLocalCache() {
       if (parsed.goals) {
         state.goals = {
           annual_books: Number(parsed.goals.annual_books || 24),
-          daily_minutes: Number(parsed.goals.daily_minutes || 30)
+          daily_minutes: Number(parsed.goals.daily_minutes || 30),
+          config: normalizeGoalsConfig(parsed.goals)
         };
       }
     }
@@ -359,7 +393,8 @@ window.syncFromServer = async function (manual = false) {
     if (data.goals) {
       state.goals = {
         annual_books: Number(data.goals.annual_books || 24),
-        daily_minutes: Number(data.goals.daily_minutes || 30)
+        daily_minutes: Number(data.goals.daily_minutes || 30),
+        config: normalizeGoalsConfig(data.goals)
       };
     }
     if (data.user) {
@@ -436,31 +471,45 @@ function localDateKey(dInput) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function getGoalsConfig() {
+  if (!state.goals || !state.goals.config) {
+    state.goals = {
+      annual_books: Number((state.goals && state.goals.annual_books) || 24),
+      daily_minutes: Number((state.goals && state.goals.daily_minutes) || 30),
+      config: createDefaultGoalsConfig(
+        Number((state.goals && state.goals.annual_books) || 24),
+        Number((state.goals && state.goals.daily_minutes) || 30)
+      )
+    };
+  }
+  return state.goals.config;
+}
+
+function getMondayOfDate(d) {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = (copy.getDay() + 6) % 7; // 0 = Lundi
+  copy.setDate(copy.getDate() - day);
+  return copy;
+}
+
 function computeReadingStreakAndGoals() {
+  const cfg = getGoalsConfig();
   const activeDaySet = new Set();
   const today = new Date();
   const todayKey = localDateKey(today);
   const currentYear = today.getFullYear();
-
-  let todayMinutes = 0;
-  let todayPages = 0;
 
   for (const s of state.sessions) {
     const mins = Number(s.duration_minutes || 0);
     const pages = Number(s.pages_read || 0);
     if (mins <= 0 && pages <= 0) continue;
     const dk = localDateKey(s.start_time);
-    if (!dk) continue;
-    activeDaySet.add(dk);
-    if (dk === todayKey) {
-      todayMinutes += mins;
-      todayPages += pages;
-    }
+    if (dk) activeDaySet.add(dk);
   }
 
   const readToday = activeDaySet.has(todayKey);
 
-  // Calcul de la série en cours (si pas encore lu aujourd'hui, on part d'hier pour ne pas casser la série avant la lecture du soir)
+  // 1. Streak Quotidien (jours consécutifs)
   let currentStreak = 0;
   const cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   if (!readToday) cursor.setDate(cursor.getDate() - 1);
@@ -469,7 +518,6 @@ function computeReadingStreakAndGoals() {
     cursor.setDate(cursor.getDate() - 1);
   }
 
-  // Record historique absolu de jours consécutifs
   let bestStreak = currentStreak;
   const sortedDays = Array.from(activeDaySet).sort();
   let run = 0;
@@ -487,26 +535,191 @@ function computeReadingStreakAndGoals() {
     prevDate = curDate;
   }
 
-  const yearBooksFinished = state.books.filter((b) => {
-    if (b.status !== "Terminé") return false;
-    if (b.finished_at) return String(b.finished_at).startsWith(String(currentYear));
-    return false;
-  }).length;
+  // 2. Streak Hebdomadaire bienveillant (semaines consécutives avec >= N jours lus)
+  const weekCounts = {};
+  for (const dk of activeDaySet) {
+    const [y, m, day] = dk.split("-").map(Number);
+    const mon = getMondayOfDate(new Date(y, m - 1, day));
+    const wkKey = localDateKey(mon);
+    weekCounts[wkKey] = (weekCounts[wkKey] || 0) + 1;
+  }
+  const thisMon = getMondayOfDate(today);
+  const thisWeekKey = localDateKey(thisMon);
+  const thisWeekDays = weekCounts[thisWeekKey] || 0;
+  const weeklyTarget = Math.max(1, Math.min(7, Number(cfg.weekly_days_target || 4)));
 
-  const annualGoal = Math.max(1, Number((state.goals && state.goals.annual_books) || 24));
-  const dailyGoal = Math.max(5, Number((state.goals && state.goals.daily_minutes) || 30));
+  let weeklyStreak = 0;
+  const wCursor = new Date(thisMon.getTime());
+  if (thisWeekDays >= weeklyTarget) {
+    weeklyStreak = 1;
+  }
+  wCursor.setDate(wCursor.getDate() - 7);
+  while ((weekCounts[localDateKey(wCursor)] || 0) >= weeklyTarget) {
+    weeklyStreak++;
+    wCursor.setDate(wCursor.getDate() - 7);
+  }
+
+  let bestWeeklyStreak = weeklyStreak;
+  const sortedWeeks = Object.keys(weekCounts).sort();
+  let wRun = 0;
+  let prevMon = null;
+  for (const wk of sortedWeeks) {
+    if ((weekCounts[wk] || 0) < weeklyTarget) {
+      wRun = 0;
+      prevMon = null;
+      continue;
+    }
+    const [y, m, day] = wk.split("-").map(Number);
+    const monDt = new Date(y, m - 1, day);
+    if (prevMon && Math.round((monDt - prevMon) / 86400000) === 7) {
+      wRun++;
+    } else {
+      wRun = 1;
+    }
+    if (wRun > bestWeeklyStreak) bestWeeklyStreak = wRun;
+    prevMon = monDt;
+  }
 
   return {
+    streakMode: cfg.streak_mode || "daily",
     currentStreak,
     bestStreak,
     readToday,
-    todayMinutes: Math.round(todayMinutes),
-    todayPages,
-    yearBooksFinished,
+    weeklyTarget,
+    thisWeekDays,
+    weeklyStreak,
+    bestWeeklyStreak,
     currentYear,
-    annualGoal,
-    dailyGoal
+    config: cfg
   };
+}
+
+function evaluateGoalItem(item) {
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const curYear = today.getFullYear();
+  const curMonthPrefix = todayKey.slice(0, 7);
+  const thisMon = getMondayOfDate(today);
+  const thisSun = new Date(thisMon.getFullYear(), thisMon.getMonth(), thisMon.getDate() + 6, 23, 59, 59);
+
+  const inPeriod = (dateStrOrIso) => {
+    if (!dateStrOrIso) return false;
+    const dk = localDateKey(dateStrOrIso);
+    if (!dk) return false;
+    if (item.period === "day") return dk === todayKey;
+    if (item.period === "month") return dk.startsWith(curMonthPrefix);
+    if (item.period === "year") return dk.startsWith(String(curYear));
+    if (item.period === "week") {
+      const [y, m, d] = dk.split("-").map(Number);
+      const dt = new Date(y, m - 1, d, 12, 0, 0);
+      return dt >= thisMon && dt <= thisSun;
+    }
+    return false;
+  };
+
+  let current = 0;
+  if (item.metric === "books") {
+    current = state.books.filter((b) => b.status === "Terminé" && inPeriod(b.finished_at)).length;
+  } else {
+    for (const s of state.sessions) {
+      if (!inPeriod(s.start_time)) continue;
+      if (item.metric === "pages") current += Number(s.pages_read || 0);
+      if (item.metric === "minutes") current += Number(s.duration_minutes || 0);
+      if (item.metric === "hours") current += Number(s.duration_minutes || 0) / 60;
+    }
+  }
+
+  const target = Math.max(1, Number(item.target || 1));
+  const displayCur = item.metric === "hours" ? Math.round(current * 10) / 10 : Math.round(current);
+  const pct = Math.min(100, Math.round((current / target) * 100));
+
+  const unitLabelMap = { books: "livres", pages: "p.", minutes: "min", hours: "h" };
+  const periodLabelMap = { day: "aujourd'hui", week: "cette sem.", month: "ce mois", year: String(curYear) };
+  const unit = unitLabelMap[item.metric] || "";
+  const periodLbl = periodLabelMap[item.period] || "";
+
+  // Pace Tracker (avance / retard) sur semaine, mois et année
+  let paceText = "";
+  let paceColor = "var(--muted)";
+  if (current >= target) {
+    paceText = "🏆 Objectif atteint !";
+    paceColor = "#34D399";
+  } else if (item.period !== "day") {
+    let dayIndex = 1;
+    let totalDays = 1;
+    if (item.period === "week") {
+      dayIndex = ((today.getDay() + 6) % 7) + 1;
+      totalDays = 7;
+    } else if (item.period === "month") {
+      dayIndex = today.getDate();
+      totalDays = new Date(curYear, today.getMonth() + 1, 0).getDate();
+    } else if (item.period === "year") {
+      const startY = new Date(curYear, 0, 1);
+      dayIndex = Math.floor((today - startY) / 86400000) + 1;
+      totalDays = (curYear % 4 === 0 && (curYear % 100 !== 0 || curYear % 400 === 0)) ? 366 : 365;
+    }
+    const expected = (target * dayIndex) / totalDays;
+    const delta = current - expected;
+    const daysLeft = Math.max(1, totalDays - dayIndex + 1);
+    const neededPerDay = (target - current) / daysLeft;
+
+    const fmtDelta = item.metric === "hours" ? Math.abs(delta).toFixed(1) : Math.round(Math.abs(delta));
+    if (delta >= Math.max(0.5, target * 0.03)) {
+      paceText = `🟢 En avance (+${fmtDelta} ${unit})`;
+      paceColor = "#34D399";
+    } else if (delta <= -Math.max(0.5, target * 0.04)) {
+      const needFmt = item.metric === "books"
+        ? `${(neededPerDay * 30).toFixed(1)}/mois`
+        : `${item.metric === "hours" ? (neededPerDay * 60).toFixed(0) + " min/j" : Math.ceil(neededPerDay) + " " + unit + "/j"}`;
+      paceText = `🟡 Retard (-${fmtDelta} ${unit}) • ${needFmt}`;
+      paceColor = "#FBBF24";
+    } else {
+      paceText = "🔵 Dans le rythme";
+      paceColor = "#38BDF8";
+    }
+  }
+
+  return {
+    current: displayCur,
+    target,
+    pct,
+    unit,
+    periodLbl,
+    paceText,
+    paceColor
+  };
+}
+
+function evaluateChallenge(ch) {
+  const curYear = String(new Date().getFullYear());
+  const yearBooks = state.books.filter((b) => {
+    if (b.status === "Terminé" && b.finished_at && String(b.finished_at).startsWith(curYear)) return true;
+    return false;
+  });
+
+  let current = 0;
+  let details = [];
+  if (ch.type === "countries") {
+    const set = new Set(yearBooks.map((b) => (b.author_country || "").trim()).filter(Boolean));
+    current = set.size;
+    details = Array.from(set).slice(0, 5);
+  } else if (ch.type === "genres") {
+    const set = new Set();
+    yearBooks.forEach((b) => (b.genres || []).forEach((g) => { if (g.trim()) set.add(g.trim()); }));
+    current = set.size;
+    details = Array.from(set).slice(0, 5);
+  } else if (ch.type === "subgenres") {
+    const set = new Set();
+    yearBooks.forEach((b) => (b.fantasy_subgenres || []).forEach((s) => { if (s.trim()) set.add(s.trim()); }));
+    current = set.size;
+    details = Array.from(set).slice(0, 5);
+  } else if (ch.type === "pal_finished") {
+    current = yearBooks.filter((b) => Boolean(b.pal_month)).length;
+  }
+
+  const target = Math.max(1, Number(ch.target || 1));
+  const pct = Math.min(100, Math.round((current / target) * 100));
+  return { current, target, pct, details };
 }
 
 function computeCostPerHour(books, sessions) {
@@ -544,72 +757,288 @@ function computeCostPerHour(books, sessions) {
   };
 }
 
-function renderStreakGoalsBannerHtml() {
+function renderStreakGoalsBannerHtml(expanded = false) {
   const sg = computeReadingStreakAndGoals();
-  const dailyPct = Math.min(100, Math.round((sg.todayMinutes / sg.dailyGoal) * 100));
-  const yearPct = Math.min(100, Math.round((sg.yearBooksFinished / sg.annualGoal) * 100));
-  const streakColor = sg.currentStreak > 0 ? "#F59E0B" : "var(--muted)";
+  const cfg = sg.config;
+  const enabledItems = (cfg.items || []).filter((it) => it.enabled);
+  const shownItems = expanded
+    ? enabledItems
+    : (enabledItems.filter((it) => it.pinned).length > 0 ? enabledItems.filter((it) => it.pinned).slice(0, 2) : enabledItems.slice(0, 2));
+
+  const isWeekly = sg.streakMode === "weekly";
+  const streakTitle = isWeekly
+    ? `🌿 ${sg.weeklyStreak} sem.`
+    : `🔥 ${sg.currentStreak} j.`;
+  const streakColor = (isWeekly ? sg.weeklyStreak : sg.currentStreak) > 0 ? (isWeekly ? "#34D399" : "#F59E0B") : "var(--muted)";
+  const streakSub = isWeekly
+    ? `Record : <b>${sg.bestWeeklyStreak} sem.</b> • Cette sem. : <b style="color:${sg.thisWeekDays >= sg.weeklyTarget ? "#34D399" : "#FBBF24"};">${sg.thisWeekDays}/${sg.weeklyTarget} j.</b>`
+    : `Record : <b>${sg.bestStreak} j.</b> • ${sg.readToday ? '<span style="color:#34D399;">✅ Lu aujourd\'hui</span>' : '<span style="color:#FBBF24;">⏳ À lire aujourd\'hui</span>'}`;
+
+  const goalsGridHtml = shownItems.length > 0
+    ? `<div class="${shownItems.length === 1 ? "" : "grid-2"}" style="gap:10px;">
+        ${shownItems.map((it) => {
+          const ev = evaluateGoalItem(it);
+          const barCol = ev.pct >= 100 ? "#10B981" : (it.metric === "books" ? "#8B5CF6" : (it.metric === "pages" ? "#38BDF8" : "var(--primary)"));
+          return `
+            <div style="background:rgba(15,23,42,0.45);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);">
+              <div style="display:flex;justify-content:space-between;font-size:0.73rem;color:var(--muted);margin-bottom:3px;gap:4px;">
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.label || `${ev.unit} (${ev.periodLbl})`)}</span>
+                <span style="flex-shrink:0;"><b style="color:${ev.pct >= 100 ? "#34D399" : "var(--text)"};">${ev.current}</b> / ${ev.target} ${ev.unit}</span>
+              </div>
+              <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${ev.pct}%;background:${barCol};"></div></div>
+              ${ev.paceText ? `<div style="font-size:0.68rem;color:${ev.paceColor};margin-top:4px;font-weight:600;">${ev.paceText}</div>` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>`
+    : `<div style="font-size:0.78rem;color:var(--muted);">Aucun objectif actif. Cliquez sur « 🎯 Objectifs & Défis » pour personnaliser.</div>`;
+
+  let challengesHtml = "";
+  if (expanded) {
+    const activeCh = (cfg.challenges || []).filter((c) => c.enabled);
+    if (activeCh.length > 0) {
+      challengesHtml = `
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+          <div style="font-size:0.78rem;font-weight:700;color:var(--primary-light);margin-bottom:8px;">🏆 Défis thématiques ${sg.currentYear}</div>
+          <div class="grid-2" style="gap:8px;">
+            ${activeCh.map((ch) => {
+              const ev = evaluateChallenge(ch);
+              return `
+                <div style="background:rgba(15,23,42,0.5);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);">
+                  <div style="display:flex;justify-content:space-between;font-size:0.73rem;margin-bottom:3px;">
+                    <span>${escapeHtml(ch.label)}</span>
+                    <b style="color:${ev.pct >= 100 ? "#34D399" : "var(--text)"};">${ev.current}/${ev.target}</b>
+                  </div>
+                  <div class="progress-track" style="height:4px;"><div class="progress-fill" style="width:${ev.pct}%;background:${ev.pct >= 100 ? "#10B981" : "#E879F9"};"></div></div>
+                  ${ev.details.length > 0 ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ev.details.join(" • "))}</div>` : ""}
+                </div>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      `;
+    }
+  }
 
   return `
     <div class="card" style="padding:12px 14px;margin-bottom:12px;border-color:rgba(99,102,241,0.35);">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:1.15rem;font-weight:800;color:${streakColor};">🔥 ${sg.currentStreak} j.</span>
-          <span style="font-size:0.75rem;color:var(--muted);">
-            Record : <b>${sg.bestStreak} j.</b> • ${sg.readToday ? '<span style="color:#34D399;">✅ Lu aujourd\'hui</span>' : '<span style="color:#FBBF24;">⏳ À lire aujourd\'hui</span>'}
-          </span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:1.1rem;font-weight:800;color:${streakColor};">${streakTitle}</span>
+          <span style="font-size:0.74rem;color:var(--muted);">${streakSub}</span>
         </div>
-        <button class="btn" style="padding:4px 9px;font-size:0.74rem;" onclick="window.openGoalsModal()">🎯 Objectifs</button>
+        <button class="btn" style="padding:4px 9px;font-size:0.74rem;flex-shrink:0;" onclick="window.openGoalsModal('goals')">🎯 Objectifs & Défis</button>
       </div>
-      <div class="grid-2" style="gap:10px;">
-        <div>
-          <div style="display:flex;justify-content:space-between;font-size:0.73rem;color:var(--muted);margin-bottom:3px;">
-            <span>⏱️ Aujourd'hui</span>
-            <span><b style="color:${dailyPct >= 100 ? "#34D399" : "var(--text)"};">${sg.todayMinutes}</b> / ${sg.dailyGoal} min</span>
-          </div>
-          <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${dailyPct}%;background:${dailyPct >= 100 ? "#10B981" : "var(--primary)"};"></div></div>
-        </div>
-        <div>
-          <div style="display:flex;justify-content:space-between;font-size:0.73rem;color:var(--muted);margin-bottom:3px;">
-            <span>📚 Objectif ${sg.currentYear}</span>
-            <span><b style="color:${yearPct >= 100 ? "#34D399" : "var(--text)"};">${sg.yearBooksFinished}</b> / ${sg.annualGoal} livres</span>
-          </div>
-          <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${yearPct}%;background:#8B5CF6;"></div></div>
-        </div>
-      </div>
+      ${goalsGridHtml}
+      ${challengesHtml}
     </div>
   `;
 }
 
-window.openGoalsModal = function () {
-  const sg = computeReadingStreakAndGoals();
+let goalsModalTab = "goals";
+
+window.openGoalsModal = function (tab = "goals") {
+  goalsModalTab = tab;
+  const cfg = getGoalsConfig();
+  const isWeekly = cfg.streak_mode === "weekly";
+
+  const metricOpts = [
+    ["books", "📚 Livres"],
+    ["pages", "📄 Pages"],
+    ["minutes", "⏱️ Minutes"],
+    ["hours", "⌛ Heures"]
+  ];
+  const periodOpts = [
+    ["day", "Par jour"],
+    ["week", "Par semaine"],
+    ["month", "Par mois"],
+    ["year", "Par an"]
+  ];
+
+  const goalsTabHtml = `
+    <div style="background:rgba(15,23,42,0.55);padding:10px 12px;border-radius:10px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-weight:700;font-size:0.84rem;margin-bottom:6px;">🔥 Mode de Série (Streak)</div>
+      <div class="mode-toggle" style="margin-bottom:6px;">
+        <button class="mode-btn ${!isWeekly ? "active-focus" : ""}" onclick="window.setGoalsStreakMode('daily')">🔥 Quotidien (chaque jour)</button>
+        <button class="mode-btn ${isWeekly ? "active-focus" : ""}" onclick="window.setGoalsStreakMode('weekly')">🌿 Hebdo bienveillant</button>
+      </div>
+      ${isWeekly ? `
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.8rem;color:var(--muted);">
+          <span>Jours lus par semaine pour valider la série :</span>
+          <input type="number" id="goal-weekly-days" min="1" max="7" value="${cfg.weekly_days_target || 4}" style="width:64px;padding:5px 8px;" onchange="window.updateWeeklyDaysTarget(this.value)" />
+        </div>
+      ` : `<div style="font-size:0.75rem;color:var(--muted);">Compte vos jours consécutifs de lecture (tolère jusqu'à minuit avant de casser la série).</div>`}
+    </div>
+
+    <div style="font-weight:700;font-size:0.85rem;margin-bottom:6px;">🎯 Vos objectifs personnalisés <span style="font-weight:400;color:var(--muted);font-size:0.75rem;">(📌 = affiché sur l'écran Lecture)</span></div>
+    <div style="display:grid;gap:8px;margin-bottom:12px;">
+      ${cfg.items.map((it, idx) => {
+        const ev = evaluateGoalItem(it);
+        return `
+          <div style="background:rgba(30,41,59,0.65);padding:9px 10px;border-radius:9px;border:1px solid ${it.enabled ? "rgba(99,102,241,0.45)" : "var(--border)"};">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+              <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;color:var(--text);font-size:0.83rem;">
+                <input type="checkbox" ${it.enabled ? "checked" : ""} onchange="window.toggleGoalItem(${idx}, 'enabled', this.checked)" />
+                <b>${escapeHtml(it.label)}</b>
+              </label>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <button class="btn ${it.pinned ? "btn-primary" : ""}" style="padding:3px 7px;font-size:0.72rem;" title="Épingler sur l'écran Lecture" onclick="window.toggleGoalItem(${idx}, 'pinned', ${!it.pinned})">📌</button>
+                ${cfg.items.length > 1 ? `<button class="btn btn-danger" style="padding:3px 7px;font-size:0.72rem;" onclick="window.deleteGoalItem(${idx})">🗑️</button>` : ""}
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:7px;">
+              <input type="number" min="1" max="100000" value="${it.target}" style="width:90px;padding:5px 8px;font-size:0.82rem;" onchange="window.updateGoalItemTarget(${idx}, this.value)" />
+              <span style="font-size:0.78rem;color:var(--muted);">${ev.unit} (${ev.periodLbl}) • Actuel : <b style="color:var(--text);">${ev.current}</b></span>
+            </div>
+            ${ev.paceText ? `<div style="font-size:0.72rem;color:${ev.paceColor};margin-top:4px;">${ev.paceText}</div>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+
+    <div style="background:rgba(15,23,42,0.55);padding:10px 12px;border-radius:10px;border:1px dashed var(--primary-light);">
+      <div style="font-weight:700;font-size:0.82rem;color:var(--primary-light);margin-bottom:6px;">➕ Créer un nouvel objectif</div>
+      <div class="grid-3" style="gap:6px;">
+        <select id="new-goal-metric" style="padding:6px;font-size:0.8rem;">
+          ${metricOpts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}
+        </select>
+        <select id="new-goal-period" style="padding:6px;font-size:0.8rem;">
+          ${periodOpts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}
+        </select>
+        <input type="number" id="new-goal-target" min="1" value="150" placeholder="Cible" style="padding:6px;font-size:0.8rem;" />
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:8px;padding:8px;font-size:0.82rem;" onclick="window.addCustomGoalItem()">
+        ➕ Ajouter cet objectif
+      </button>
+    </div>
+  `;
+
+  const challengesTabHtml = `
+    <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;">
+      Activez les défis thématiques qui vous inspirent : ils se mettent à jour automatiquement selon vos lectures terminées de l'année !
+    </div>
+    <div style="display:grid;gap:8px;">
+      ${(cfg.challenges || []).map((ch, idx) => {
+        const ev = evaluateChallenge(ch);
+        return `
+          <div style="background:rgba(30,41,59,0.65);padding:10px;border-radius:9px;border:1px solid ${ch.enabled ? "rgba(232,121,249,0.45)" : "var(--border)"};">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+              <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;color:var(--text);font-size:0.83rem;">
+                <input type="checkbox" ${ch.enabled ? "checked" : ""} onchange="window.toggleChallengeItem(${idx}, this.checked)" />
+                <b>${escapeHtml(ch.label)}</b>
+              </label>
+              <span style="font-size:0.78rem;font-weight:700;color:${ev.pct >= 100 ? "#34D399" : "#E879F9"};">${ev.current} / ${ev.target}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:7px;">
+              <span style="font-size:0.76rem;color:var(--muted);">Objectif :</span>
+              <input type="number" min="1" max="200" value="${ch.target}" style="width:76px;padding:5px 8px;font-size:0.82rem;" onchange="window.updateChallengeTarget(${idx}, this.value)" />
+            </div>
+            <div class="progress-track" style="height:5px;margin-top:7px;"><div class="progress-fill" style="width:${ev.pct}%;background:${ev.pct >= 100 ? "#10B981" : "#E879F9"};"></div></div>
+            ${ev.details.length > 0 ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:4px;">Déjà validé : ${escapeHtml(ev.details.join(" • "))}</div>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
   openModal(`
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h3 style="margin:0;">🎯 Mes Objectifs de Lecture</h3>
+      <h3 style="margin:0;">🎯 Objectifs & Défis</h3>
       <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
     </div>
-    <div style="font-size:0.82rem;color:var(--muted);margin:8px 0 12px;">
-      Personnalisez vos objectifs annuels et quotidiens pour suivre votre régularité et votre série 🔥.
+    <div class="mode-toggle" style="margin:10px 0 12px;">
+      <button class="mode-btn ${goalsModalTab === "goals" ? "active-focus" : ""}" onclick="window.openGoalsModal('goals')">🎯 Objectifs & Streak</button>
+      <button class="mode-btn ${goalsModalTab === "challenges" ? "active-focus" : ""}" onclick="window.openGoalsModal('challenges')">🏆 Défis (${(cfg.challenges || []).filter((c) => c.enabled).length})</button>
     </div>
-    <label>📚 Objectif de livres terminés en ${sg.currentYear}</label>
-    <input type="number" id="goal-annual-books" min="1" max="500" value="${sg.annualGoal}" />
-    <label>⏱️ Objectif de lecture quotidien (minutes / jour)</label>
-    <input type="number" id="goal-daily-minutes" min="5" max="600" step="5" value="${sg.dailyGoal}" />
-    <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:12px;" onclick="window.saveGoalsForm()">
-      💾 Enregistrer mes objectifs
+    ${goalsModalTab === "goals" ? goalsTabHtml : challengesTabHtml}
+    <button class="btn btn-success" style="width:100%;margin-top:14px;padding:12px;" onclick="window.saveGoalsConfigToServer(true)">
+      💾 Enregistrer & Fermer
     </button>
   `);
 };
 
-window.saveGoalsForm = async function () {
-  const annual_books = Math.max(1, Math.min(500, Number(document.getElementById("goal-annual-books").value || 24)));
-  const daily_minutes = Math.max(5, Math.min(600, Number(document.getElementById("goal-daily-minutes").value || 30)));
-  state.goals = { annual_books, daily_minutes };
+window.setGoalsStreakMode = function (mode) {
+  const cfg = getGoalsConfig();
+  cfg.streak_mode = mode === "weekly" ? "weekly" : "daily";
+  window.saveGoalsConfigToServer(false);
+  window.openGoalsModal("goals");
+};
+
+window.updateWeeklyDaysTarget = function (val) {
+  const cfg = getGoalsConfig();
+  cfg.weekly_days_target = Math.max(1, Math.min(7, Number(val || 4)));
+  window.saveGoalsConfigToServer(false);
+};
+
+window.toggleGoalItem = function (idx, field, val) {
+  const cfg = getGoalsConfig();
+  if (cfg.items[idx]) cfg.items[idx][field] = Boolean(val);
+  window.saveGoalsConfigToServer(false);
+  window.openGoalsModal("goals");
+};
+
+window.updateGoalItemTarget = function (idx, val) {
+  const cfg = getGoalsConfig();
+  if (cfg.items[idx]) cfg.items[idx].target = Math.max(1, Number(val || 1));
+  window.saveGoalsConfigToServer(false);
+};
+
+window.deleteGoalItem = function (idx) {
+  const cfg = getGoalsConfig();
+  cfg.items.splice(idx, 1);
+  window.saveGoalsConfigToServer(false);
+  window.openGoalsModal("goals");
+};
+
+window.addCustomGoalItem = function () {
+  const cfg = getGoalsConfig();
+  const metric = document.getElementById("new-goal-metric").value;
+  const period = document.getElementById("new-goal-period").value;
+  const target = Math.max(1, Number(document.getElementById("new-goal-target").value || 10));
+  const mNames = { books: "Livres", pages: "Pages", minutes: "Minutes", hours: "Heures" };
+  const pNames = { day: "par jour", week: "par semaine", month: "par mois", year: "cette année" };
+  cfg.items.push({
+    id: `g_custom_${Date.now()}`,
+    enabled: true,
+    pinned: cfg.items.filter((x) => x.pinned).length < 2,
+    metric,
+    period,
+    target,
+    label: `${mNames[metric] || metric} ${pNames[period] || ""}`.trim()
+  });
+  window.saveGoalsConfigToServer(false);
+  window.openGoalsModal("goals");
+};
+
+window.toggleChallengeItem = function (idx, checked) {
+  const cfg = getGoalsConfig();
+  if (cfg.challenges[idx]) cfg.challenges[idx].enabled = Boolean(checked);
+  window.saveGoalsConfigToServer(false);
+  window.openGoalsModal("challenges");
+};
+
+window.updateChallengeTarget = function (idx, val) {
+  const cfg = getGoalsConfig();
+  if (cfg.challenges[idx]) cfg.challenges[idx].target = Math.max(1, Number(val || 1));
+  window.saveGoalsConfigToServer(false);
+};
+
+window.saveGoalsConfigToServer = async function (closeAfter = false) {
+  const cfg = getGoalsConfig();
+  const yearBooksItem = cfg.items.find((x) => x.metric === "books" && x.period === "year");
+  const dailyMinItem = cfg.items.find((x) => x.metric === "minutes" && x.period === "day");
+  state.goals.annual_books = yearBooksItem ? Number(yearBooksItem.target) : 24;
+  state.goals.daily_minutes = dailyMinItem ? Number(dailyMinItem.target) : 30;
+  state.goals.config = cfg;
   saveLocalCache();
-  window.closeModal();
+  if (closeAfter) window.closeModal();
   renderCurrentTab();
   try {
-    await apiCall("save_goals", { annual_books, daily_minutes });
+    await apiCall("save_goals", {
+      annual_books: state.goals.annual_books,
+      daily_minutes: state.goals.daily_minutes,
+      config: cfg
+    });
   } catch (e) {
     console.warn("save_goals warning:", e);
   }
@@ -2629,7 +3058,7 @@ function renderStatsRhythmTab() {
   const dailyPagesNeeded = pagesRemainingPal / daysLeft;
 
   box.innerHTML = `
-    ${renderStreakGoalsBannerHtml()}
+    ${renderStreakGoalsBannerHtml(true)}
     <div class="kpi-grid kpi-grid-4">
       <div class="kpi-card" style="border-color:rgba(99,102,241,0.5);">
         <div class="kpi-label">🎯 Vitesse Focus</div>
