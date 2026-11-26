@@ -93,6 +93,8 @@ function normalizeBook(row) {
     pal_month: row.pal_month || "",
     pal_year: row.pal_year ? Number(row.pal_year) : null,
     current_page: Number(row.current_page || 0),
+    audio_duration_minutes: row.audio_duration_minutes !== null && row.audio_duration_minutes !== undefined ? Number(row.audio_duration_minutes) : null,
+    audio_current_minutes: Number(row.audio_current_minutes || 0),
     started_at: row.started_at ? String(row.started_at).slice(0, 10) : null,
     finished_at: row.finished_at ? String(row.finished_at).slice(0, 10) : null,
     target_finish_date: row.target_finish_date ? String(row.target_finish_date).slice(0, 10) : "",
@@ -880,8 +882,110 @@ async function fetchFromGoogleBooks(isbnOrQuery, apiKey = "") {
   return { data, results };
 }
 
+function parseBookLinkUrl(rawInput) {
+  const s = String(rawInput || "").trim();
+  const looksLikeUrl = /^https?:\/\//i.test(s) || /\b(?:amazon|audible|kobo|fnac|goodreads)\.[a-z]{2,}\//i.test(s);
+  if (!looksLikeUrl) return { query: s, detectedFormat: null, isUrl: false };
+
+  let urlObj = null;
+  try {
+    urlObj = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
+  } catch {
+    return { query: s, detectedFormat: null, isUrl: false };
+  }
+
+  const host = urlObj.hostname.toLowerCase();
+  const pathRaw = decodeURIComponent(urlObj.pathname || "");
+  const fullLower = `${host}${pathRaw}${urlObj.search || ""}`.toLowerCase();
+
+  let detectedFormat = null;
+  if (host.includes("audible.") || /\/(?:livre-audio|audiobook|audio-book)\b/i.test(fullLower) || fullLower.includes("livre-audio")) {
+    detectedFormat = "Audio";
+  } else if (host.includes("kobo.") || /\b(?:kindle|ebook|e-book|livre-numerique)\b/i.test(fullLower)) {
+    detectedFormat = "Numérique";
+  }
+
+  // 1. Direct ISBN-13 in URL
+  const mIsbn13 = fullLower.match(/(97[89]\d{10})/);
+  if (mIsbn13) {
+    return { query: mIsbn13[1], detectedFormat, isUrl: true };
+  }
+
+  // 2. Amazon ISBN-10 in /dp/ or /gp/product/
+  const mAmzId = pathRaw.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})\b/i);
+  if (mAmzId && /^\d{9}[\dX]$/i.test(mAmzId[1])) {
+    return { query: mAmzId[1].toUpperCase(), detectedFormat, isUrl: true };
+  }
+
+  // 3. Extract title slug from known store URLs
+  let slug = "";
+  if (host.includes("audible.")) {
+    const m = pathRaw.match(/\/pd\/([^/]+)/i);
+    if (m) slug = m[1];
+  } else if (host.includes("amazon.")) {
+    const m = pathRaw.match(/^\/([^/]+)\/(?:dp|gp\/product)\//i);
+    if (m && m[1] !== "dp" && m[1] !== "gp") slug = m[1];
+  } else if (host.includes("kobo.")) {
+    const m = pathRaw.match(/\/(?:ebook|audiobook)\/([^/]+)/i);
+    if (m) slug = m[1];
+  } else if (host.includes("fnac.")) {
+    const m = pathRaw.match(/\/a\d+\/([^/]+)/i);
+    if (m) slug = m[1];
+  } else if (host.includes("goodreads.")) {
+    const m = pathRaw.match(/\/book\/show\/\d+[.-]([^/?]+)/i);
+    if (m) slug = m[1];
+  }
+
+  if (!slug) {
+    // Fallback: take the longest meaningful path segment
+    const segs = pathRaw.split("/").filter((p) => p.length > 4 && !/^(dp|gp|pd|book|show|ebook|audiobook|product|fr|en|us|uk)$/i.test(p));
+    slug = segs.sort((a, b) => b.length - a.length)[0] || "";
+  }
+
+  const cleanedQuery = slug
+    .replace(/[-_]+/g, " ")
+    .replace(/\b(?:livre audio|audiobook|unabridged|ebook|e book|format kindle|kindle edition|french edition|edition francaise|broche|poche|relie)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { query: cleanedQuery || s, detectedFormat, isUrl: true };
+}
+
+async function fetchQuickAutocomplete(queryStr) {
+  const q = String(queryStr || "").trim();
+  if (q.length < 2 || /^https?:\/\//i.test(q)) return [];
+  try {
+    const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q)}`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+    if (!resp.ok) return [];
+    const items = await resp.json();
+    if (!Array.isArray(items)) return [];
+    return items.slice(0, 6).map((it) => {
+      const rawTitle = unescapeHtml(it.title || "");
+      const bareTitle = cleanTitleFromSeries(it.bookTitleBare || rawTitle) || rawTitle;
+      const { seriesName, seriesVolume } = extractSeriesInfo(rawTitle);
+      const imgUrl = String(it.imageUrl || "");
+      const cover = imgUrl && !imgUrl.includes("nophoto")
+        ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
+        : "";
+      return {
+        title: bareTitle,
+        author: unescapeHtml((it.author && it.author.name) || ""),
+        cover_url: cover,
+        popularity_score: Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null,
+        page_count: Number(it.numPages || 0) > 0 ? Number(it.numPages) : null,
+        series_name: seriesName || "",
+        series_volume: seriesVolume
+      };
+    }).filter((x) => x.title);
+  } catch {
+    return [];
+  }
+}
+
 async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
-  const cleanInput = String(isbnOrQuery || "").trim();
+  const parsedLink = parseBookLinkUrl(isbnOrQuery);
+  const cleanInput = parsedLink.query;
   const digitsOnly = cleanInput.replace(/[^0-9Xx]/g, "").toUpperCase();
   const isIsbn = (digitsOnly.length === 10 || digitsOnly.length === 13) &&
     (digitsOnly.startsWith("978") || digitsOnly.startsWith("979") || digitsOnly.length === 10);
@@ -899,7 +1003,8 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
     page_count: 300,
     chapter_count: null,
     price: null,
-    format: "Broché",
+    format: parsedLink.detectedFormat || "Broché",
+    detected_format: parsedLink.detectedFormat || null,
     genres: [],
     tags: [],
     fantasy_subgenres: [],
@@ -1055,6 +1160,11 @@ async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
         return parents.length === 0 || parents.includes(primaryGenre);
       }).slice(0, 3)
     : rawSubgenres.slice(0, 3);
+
+  if (parsedLink.detectedFormat) {
+    result.format = parsedLink.detectedFormat;
+    result.detected_format = parsedLink.detectedFormat;
+  }
 
   const listResults = (gbRes.results && gbRes.results.length > 0)
     ? [result, ...gbRes.results.slice(1)]
@@ -1288,7 +1398,9 @@ async function ensureGoalsSchema(connStr) {
     neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS annual_books_goal INTEGER DEFAULT 24").catch(() => {}),
     neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_minutes_goal INTEGER DEFAULT 30").catch(() => {}),
     neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS goals_config TEXT").catch(() => {}),
-    neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS target_finish_date TEXT").catch(() => {})
+    neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS target_finish_date TEXT").catch(() => {}),
+    neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS audio_duration_minutes INTEGER").catch(() => {}),
+    neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS audio_current_minutes INTEGER DEFAULT 0").catch(() => {})
   ]);
   goalsSchemaReady = true;
 }
@@ -1560,6 +1672,12 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       return { status: 200, data: { ok: true } };
     }
 
+    if (action === "quick_autocomplete") {
+      const q = String(query.q || body.q || "").trim();
+      const suggestions = await fetchQuickAutocomplete(q);
+      return { status: 200, data: { ok: true, suggestions } };
+    }
+
     // 7. Enrichissement avec Cache Catalogue Partagé entre Bêta-Testeurs (0.02s si déjà scanné !)
     if (action === "search_external" || action === "enrich_book") {
       const q = String(query.q || body.q || "").trim();
@@ -1713,6 +1831,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
     }
 
     if (action === "add_session") {
+      await ensureGoalsSchema(connStr);
       const bookId = Number(body.book_id);
       const startPage = Number(body.start_page || 0);
       const endPage = Number(body.end_page || startPage);
@@ -1723,6 +1842,9 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       const dayOfWeek = new Date(nowIso).getDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
       const isFocused = body.is_focused !== false;
+      const audioEndMin = body.audio_end_minutes !== undefined && body.audio_end_minutes !== null
+        ? Math.max(0, Math.round(Number(body.audio_end_minutes)))
+        : null;
 
       await neonQuery(
         connStr,
@@ -1732,15 +1854,28 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         [userId, bookId, nowIso, durationMin, startPage, endPage, pagesRead, pagesPerHour, isWeekend, isFocused]
       );
 
-      await neonQuery(
-        connStr,
-        `UPDATE books
-         SET current_page = GREATEST(COALESCE(current_page, 0), $2),
-             started_at = COALESCE(started_at, CURRENT_DATE),
-             status = CASE WHEN status IN ('Bibliothèque', 'Wishlist', 'À acheter') THEN 'En cours' ELSE status END
-         WHERE id = $1 AND user_id = $3`,
-        [bookId, endPage, userId]
-      );
+      if (audioEndMin !== null) {
+        await neonQuery(
+          connStr,
+          `UPDATE books
+           SET current_page = GREATEST(COALESCE(current_page, 0), $2),
+               audio_current_minutes = GREATEST(COALESCE(audio_current_minutes, 0), $4),
+               started_at = COALESCE(started_at, CURRENT_DATE),
+               status = CASE WHEN status IN ('Bibliothèque', 'Wishlist', 'À acheter') THEN 'En cours' ELSE status END
+           WHERE id = $1 AND user_id = $3`,
+          [bookId, endPage, userId, audioEndMin]
+        );
+      } else {
+        await neonQuery(
+          connStr,
+          `UPDATE books
+           SET current_page = GREATEST(COALESCE(current_page, 0), $2),
+               started_at = COALESCE(started_at, CURRENT_DATE),
+               status = CASE WHEN status IN ('Bibliothèque', 'Wishlist', 'À acheter') THEN 'En cours' ELSE status END
+           WHERE id = $1 AND user_id = $3`,
+          [bookId, endPage, userId]
+        );
+      }
 
       await neonQuery(
         connStr,
@@ -1779,6 +1914,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
     }
 
     if (action === "add_book") {
+      await ensureGoalsSchema(connStr);
       const genresJson = JSON.stringify(Array.isArray(body.genres) ? body.genres : parseJsonArray(body.genres || "Fantasy"));
       const tagsJson = JSON.stringify(Array.isArray(body.tags) ? body.tags : parseJsonArray(body.tags || ""));
       const subgJson = JSON.stringify(Array.isArray(body.fantasy_subgenres) ? body.fantasy_subgenres : parseJsonArray(body.fantasy_subgenre || ""));
@@ -1787,8 +1923,8 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         `INSERT INTO books
          (user_id, isbn, title, series_name, series_volume, author, author_country, publisher, publication_year,
           page_count, chapter_count, price, format, genres, tags, fantasy_subgenre, popularity_score, cover_url,
-          status, pal_month, pal_year, current_page, started_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+          status, pal_month, pal_year, current_page, started_at, audio_duration_minutes, audio_current_minutes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
          RETURNING id`,
         [
           userId,
@@ -1813,7 +1949,9 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
           body.pal_month || null,
           body.pal_year ? Number(body.pal_year) : null,
           Number(body.current_page || 0),
-          body.status === "En cours" ? new Date().toISOString().slice(0, 10) : null
+          body.status === "En cours" ? new Date().toISOString().slice(0, 10) : null,
+          body.audio_duration_minutes ? Math.max(1, Math.round(Number(body.audio_duration_minutes))) : null,
+          Number(body.audio_current_minutes || 0)
         ]
       );
       return { status: 200, data: { ok: true, id: rows[0] ? Number(rows[0].id) : null } };
@@ -1830,6 +1968,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       const allowed = [
         "isbn", "title", "author", "author_country", "publisher", "publication_year",
         "series_name", "series_volume", "page_count", "chapter_count", "current_page",
+        "audio_duration_minutes", "audio_current_minutes",
         "status", "pal_month", "pal_year", "format", "price", "popularity_score", "cover_url",
         "started_at", "finished_at", "target_finish_date", "rating_global", "rating_pacing", "rating_chars",
         "rating_world", "rating_writing", "rating_plot", "final_review",

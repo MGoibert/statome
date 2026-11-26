@@ -203,6 +203,8 @@ let state = {
     chapter_count: "",
     price: "",
     format: "Broché",
+    audio_duration_hours: "",
+    audio_duration_mins: "",
     genres: "Fantasy",
     tags: "",
     fantasy_subgenres: [],
@@ -212,6 +214,10 @@ let state = {
     pal_month_name: "Aucun",
     pal_year_val: String(new Date().getFullYear())
   },
+  quickFormatChoice: null,
+  extSearchQuery: "",
+  autocompleteResults: [],
+  valInputMode: "default", // "default" | "pct"
   searchResults: [],
   // Stats state
   statsScope: "read", // "read" | "pal_month" | "pal_year" | "biblio" | "wishlist"
@@ -431,8 +437,12 @@ window.syncFromServer = async function (manual = false) {
 };
 
 function computeSpeeds(bookId = null) {
-  const focusAll = state.sessions.filter((s) => s.is_focused !== false);
-  const chillAll = state.sessions.filter((s) => s.is_focused === false);
+  const audioBookIds = new Set(
+    state.books.filter((b) => b.format === "Audio").map((b) => Number(b.id))
+  );
+  const visualSessions = state.sessions.filter((s) => !audioBookIds.has(Number(s.book_id)));
+  const focusAll = visualSessions.filter((s) => s.is_focused !== false);
+  const chillAll = visualSessions.filter((s) => s.is_focused === false);
 
   const calc = (arr) => {
     const mins = arr.reduce((acc, s) => acc + Number(s.duration_minutes || 0), 0);
@@ -444,7 +454,7 @@ function computeSpeeds(bookId = null) {
   const globalChillSpeed = calc(chillAll);
 
   let bookFocusSpeed = 0;
-  if (bookId) {
+  if (bookId && !audioBookIds.has(Number(bookId))) {
     bookFocusSpeed = calc(focusAll.filter((s) => Number(s.book_id) === Number(bookId)));
   }
 
@@ -455,6 +465,15 @@ function computeSpeeds(bookId = null) {
     focusCount: focusAll.length,
     chillCount: chillAll.length
   };
+}
+
+function formatAudioHM(totalMinutes) {
+  const m = Math.max(0, Math.round(Number(totalMinutes || 0)));
+  if (m <= 0) return "0 min";
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h <= 0) return `${rem} min`;
+  return `${h}h ${String(rem).padStart(2, "0")}`;
 }
 
 function formatHoursMinutes(hours) {
@@ -1164,8 +1183,17 @@ function renderReadingView() {
   const book = currentBooks.find((b) => b.id === Number(state.selectedBookId)) || currentBooks[0];
   const curP = Number(book.current_page || 0);
   const totP = Math.max(Number(book.page_count || 1), 1);
-  const pct = Math.min(100, Math.round((curP / totP) * 1000) / 10);
+  const isAudio = book.format === "Audio";
+  const isEbook = book.format === "Numérique";
+  const audioTotal = Number(book.audio_duration_minutes || 0);
+  const audioCur = Number(book.audio_current_minutes || 0);
+  const useAudioTracking = isAudio && audioTotal > 0;
+
+  const pct = useAudioTracking
+    ? Math.min(100, Math.round((audioCur / audioTotal) * 1000) / 10)
+    : Math.min(100, Math.round((curP / totP) * 1000) / 10);
   const pagesLeft = Math.max(0, totP - curP);
+  const audioMinsLeft = Math.max(0, audioTotal - audioCur);
 
   const { refFocusSpeed, globalChillSpeed } = computeSpeeds(book.id);
   const hoursLeftFocus = refFocusSpeed > 0 ? pagesLeft / refFocusSpeed : 0;
@@ -1181,19 +1209,21 @@ function renderReadingView() {
       </button>
     </div>
   `;
-  if (book.target_finish_date && pagesLeft > 0) {
+  const hasRemaining = useAudioTracking ? audioMinsLeft > 0 : pagesLeft > 0;
+  if (book.target_finish_date && hasRemaining) {
     const todayMid = new Date();
     todayMid.setHours(0, 0, 0, 0);
     const [ty, tm, td] = book.target_finish_date.split("-").map(Number);
     const targetDt = new Date(ty, tm - 1, td);
     const daysLeft = Math.max(1, Math.ceil((targetDt - todayMid) / 86400000) + 1);
-    const pPerDay = Math.ceil(pagesLeft / daysLeft);
-    const minPerDay = Math.max(1, Math.round((pPerDay / refFocusSpeed) * 60));
     const dateFr = `${td} ${FRENCH_MONTHS[tm - 1].slice(0, 4)}.`;
     const isOverdue = targetDt < todayMid;
+    const paceStr = useAudioTracking
+      ? `<b>${Math.ceil(audioMinsLeft / daysLeft)} min/jour</b> d'écoute`
+      : `<b>${Math.ceil(pagesLeft / daysLeft)} p./jour</b> (~${Math.max(1, Math.round((Math.ceil(pagesLeft / daysLeft) / refFocusSpeed) * 60))} min/j)`;
     targetDateHtml = `
       <div onclick="window.openTargetDateModal(${book.id})" style="cursor:pointer;margin-top:8px;padding:6px 9px;border-radius:8px;background:${isOverdue ? "rgba(239,68,68,0.14)" : "rgba(99,102,241,0.14)"};border:1px solid ${isOverdue ? "rgba(239,68,68,0.4)" : "rgba(99,102,241,0.38)"};font-size:0.75rem;color:${isOverdue ? "#fca5a5" : "#c7d2fe"};display:flex;justify-content:space-between;align-items:center;gap:6px;">
-        <span>${isOverdue ? "⚠️ Date cible dépassée" : `🎯 Finir avant le <b>${dateFr}</b> (${daysLeft} j.) : <b>${pPerDay} p./jour</b> (~${minPerDay} min/j)`}</span>
+        <span>${isOverdue ? "⚠️ Date cible dépassée" : `🎯 Finir avant le <b>${dateFr}</b> (${daysLeft} j.) : ${paceStr}`}</span>
         <span>✏️</span>
       </div>
     `;
@@ -1247,26 +1277,89 @@ function renderReadingView() {
     ? (isFoc ? "🟢 En direct • 🎯 Mode Focus" : "🟢 En direct • 🛋️ Mode Détente")
     : (curSec > 0 ? "🟡 En pause — Prêt à reprendre ou enregistrer" : "⚪ Prêt à démarrer");
 
-  const validationHtml = (!isRunning && curSec > 0)
-    ? `
+  let validationHtml = "";
+  if (!isRunning && curSec > 0) {
+    const showPctToggle = useAudioTracking || isEbook || isAudio;
+    const isPctMode = showPctToggle && state.valInputMode === "pct";
+    const sugAudioMin = useAudioTracking ? Math.min(audioTotal, Math.round(audioCur + curSec / 60)) : 0;
+    const sugPage = Math.min(totP, curP + Math.max(1, Math.round((curSec / 3600) * refFocusSpeed)));
+    const sugPct = useAudioTracking
+      ? Math.min(100, Math.round((sugAudioMin / audioTotal) * 100))
+      : Math.min(100, Math.round((sugPage / totP) * 100));
+
+    let inputBlockHtml = "";
+    if (isPctMode) {
+      const previewTxt = useAudioTracking
+        ? `= ${formatAudioHM(Math.round((sugPct / 100) * audioTotal))} / ${formatAudioHM(audioTotal)}`
+        : `= p. ${Math.round((sugPct / 100) * totP)} / ${totP}`;
+      inputBlockHtml = `
+        <label>Progression atteinte (%) :</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="number" id="val-new-pct" min="0" max="100" value="${sugPct}" oninput="window.updateValPctPreview(${book.id})" style="max-width:120px;" />
+          <span id="val-pct-preview" style="font-size:0.84rem;color:var(--primary-light);font-weight:700;">${previewTxt}</span>
+        </div>
+      `;
+    } else if (useAudioTracking) {
+      inputBlockHtml = `
+        <label>Position atteinte dans le livre audio :</label>
+        <div class="grid-2">
+          <div>
+            <label style="font-size:0.74rem;">Heures</label>
+            <input type="number" id="val-audio-h" min="0" value="${Math.floor(sugAudioMin / 60)}" />
+          </div>
+          <div>
+            <label style="font-size:0.74rem;">Minutes</label>
+            <input type="number" id="val-audio-m" min="0" max="59" value="${sugAudioMin % 60}" />
+          </div>
+        </div>
+      `;
+    } else {
+      inputBlockHtml = `
+        <label>Nouvelle page atteinte :</label>
+        <input type="number" id="val-new-page" min="${curP}" max="${totP}" value="${sugPage}" />
+      `;
+    }
+
+    const startBadge = useAudioTracking
+      ? `Départ : <b>${formatAudioHM(audioCur)}</b>`
+      : `Départ : <b>p. ${curP}</b>`;
+
+    validationHtml = `
       <div class="card" style="border-color: var(--primary);">
-        <div style="font-weight:700; font-size:0.98rem; margin-bottom:6px;">📝 Enregistrer votre session</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+          <div style="font-weight:700; font-size:0.98rem;">📝 Enregistrer votre session</div>
+          ${showPctToggle ? `
+            <div style="display:flex;gap:4px;">
+              <button class="pill ${!isPctMode ? "active" : ""}" style="padding:3px 9px;font-size:0.74rem;" onclick="window.setValInputMode('default')">${useAudioTracking ? "🎧 h / min" : "📖 Pages"}</button>
+              <button class="pill ${isPctMode ? "active" : ""}" style="padding:3px 9px;font-size:0.74rem;" onclick="window.setValInputMode('pct')">📊 %</button>
+            </div>
+          ` : ""}
+        </div>
         <div style="font-size:0.83rem; color:var(--muted); margin-bottom:10px;">
           Durée : <b style="color:var(--text);">${formatHMS(curSec)}</b> (${Math.max(0.1, Math.round((curSec / 60) * 10) / 10)} min) •
-          Mode : <b>${isFoc ? "🎯 Focus" : "🛋️ Détente"}</b> • Départ : <b>p. ${curP}</b>
+          ${isAudio ? "<b>🎧 Audio</b>" : `Mode : <b>${isFoc ? "🎯 Focus" : "🛋️ Détente"}</b>`} • ${startBadge}
         </div>
-        <label>Nouvelle page atteinte :</label>
-        <input type="number" id="val-new-page" min="${curP}" max="${totP}" value="${Math.min(totP, curP + Math.max(1, Math.round((curSec / 3600) * refFocusSpeed)))}" />
+        ${inputBlockHtml}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
           <button class="btn btn-success" onclick="window.confirmTimerSession(${book.id}, ${curP})">✅ Enregistrer</button>
           <button class="btn btn-danger" onclick="window.resetTimer()">🗑️ Effacer (00:00)</button>
         </div>
       </div>
-    `
-    : "";
+    `;
+  }
 
   const bookSessions = state.sessions.filter((s) => Number(s.book_id) === book.id);
   const bookNotes = state.notes.filter((n) => Number(n.book_id) === book.id);
+
+  const progressRowLeft = useAudioTracking
+    ? `<span>🎧 <b>${formatAudioHM(audioCur)}</b> / ${formatAudioHM(audioTotal)}</span>`
+    : `<span>${isEbook ? "📱 " : (isAudio ? "🎧 " : "")}<b>${curP}</b> / ${totP} p.</span>`;
+
+  const timeEstHtml = useAudioTracking
+    ? `⏳ <b>${formatAudioHM(audioMinsLeft)}</b> d'écoute restantes`
+    : (isAudio
+      ? `🎧 Livre audio • Ajoutez la durée totale dans <b>⚙️ Fiche</b> pour le suivi en heures`
+      : `⏳ <b>${pagesLeft} p.</b> restantes • 🎯 <b>${estFocusStr}</b> (${Math.round(refFocusSpeed)} p/h)${chillEstPart}`);
 
   el.innerHTML = `
     ${renderStreakGoalsBannerHtml()}
@@ -1279,14 +1372,14 @@ function renderReadingView() {
           <div class="book-author">${escapeHtml(book.author)}</div>
           ${seriesHtml}
           <div class="progress-row">
-            <span><b>${curP}</b> / ${totP} p.</span>
+            ${progressRowLeft}
             <span style="color:var(--primary-light); font-weight:700;">${pct}%</span>
           </div>
           <div class="progress-track">
             <div class="progress-fill" style="width:${pct}%"></div>
           </div>
           <div class="time-est">
-            ⏳ <b>${pagesLeft} p.</b> restantes • 🎯 <b>${estFocusStr}</b> (${Math.round(refFocusSpeed)} p/h)${chillEstPart}
+            ${timeEstHtml}
           </div>
           ${targetDateHtml}
           ${prevSagaNotesHtml}
@@ -1294,19 +1387,25 @@ function renderReadingView() {
       </div>
     </div>
 
-    <div class="mode-toggle">
-      <button class="mode-btn ${isFoc ? "active-focus" : ""}" onclick="window.setTimerMode(true)">
-        🎯 Lecture Focus
-      </button>
-      <button class="mode-btn ${!isFoc ? "active-chill" : ""}" onclick="window.setTimerMode(false)">
-        🛋️ Lecture Détente
-      </button>
-    </div>
-    <div class="mode-hint">
-      ${isFoc
-        ? "🎯 Lecture concentrée : compte dans votre vitesse de référence (pages/h)"
-        : "🛋️ Transports, TV, interruptions : compte vos pages sans fausser votre vitesse Focus"}
-    </div>
+    ${!isAudio ? `
+      <div class="mode-toggle">
+        <button class="mode-btn ${isFoc ? "active-focus" : ""}" onclick="window.setTimerMode(true)">
+          🎯 Lecture Focus
+        </button>
+        <button class="mode-btn ${!isFoc ? "active-chill" : ""}" onclick="window.setTimerMode(false)">
+          🛋️ Lecture Détente
+        </button>
+      </div>
+      <div class="mode-hint">
+        ${isFoc
+          ? "🎯 Lecture concentrée : compte dans votre vitesse de référence (pages/h)"
+          : "🛋️ Transports, TV, interruptions : compte vos pages sans fausser votre vitesse Focus"}
+      </div>
+    ` : `
+      <div class="mode-hint" style="margin-bottom:10px;">
+        🎧 Écoute audio : votre temps compte dans vos objectifs et votre calendrier sans fausser votre vitesse de lecture (pages/h).
+      </div>
+    `}
 
     <div class="card timer-card">
       <div class="timer-digits" id="live-timer-digits" style="color:${timerColor}">${formatHMS(curSec)}</div>
@@ -1413,16 +1512,66 @@ window.resetTimer = function () {
   apiCall("clear_timer", {}).catch(() => {});
 };
 
+window.setValInputMode = function (mode) {
+  state.valInputMode = mode === "pct" ? "pct" : "default";
+  renderReadingView();
+};
+
+window.updateValPctPreview = function (bookId) {
+  const book = state.books.find((b) => b.id === Number(bookId));
+  const inp = document.getElementById("val-new-pct");
+  const prev = document.getElementById("val-pct-preview");
+  if (!book || !inp || !prev) return;
+  const pct = Math.max(0, Math.min(100, Number(inp.value || 0)));
+  const audioTotal = Number(book.audio_duration_minutes || 0);
+  if (book.format === "Audio" && audioTotal > 0) {
+    prev.textContent = `= ${formatAudioHM(Math.round((pct / 100) * audioTotal))} / ${formatAudioHM(audioTotal)}`;
+  } else {
+    const totP = Math.max(1, Number(book.page_count || 1));
+    prev.textContent = `= p. ${Math.round((pct / 100) * totP)} / ${totP}`;
+  }
+};
+
 window.confirmTimerSession = async function (bookId, startPage) {
-  const input = document.getElementById("val-new-page");
-  const endPage = Number(input ? input.value : startPage);
+  const book = state.books.find((b) => b.id === Number(bookId));
+  const totP = Math.max(1, Number((book && book.page_count) || 1));
+  const audioTotal = Number((book && book.audio_duration_minutes) || 0);
+  const useAudioTracking = Boolean(book && book.format === "Audio" && audioTotal > 0);
+
+  let endPage = startPage;
+  let audioEndMinutes = null;
+
+  const pctInput = document.getElementById("val-new-pct");
+  const audioHInput = document.getElementById("val-audio-h");
+  const audioMInput = document.getElementById("val-audio-m");
+  const pageInput = document.getElementById("val-new-page");
+
+  if (pctInput) {
+    const pctVal = Math.max(0, Math.min(100, Number(pctInput.value || 0)));
+    if (useAudioTracking) {
+      audioEndMinutes = Math.min(audioTotal, Math.round((pctVal / 100) * audioTotal));
+      endPage = Math.min(totP, Math.max(startPage, Math.round((pctVal / 100) * totP)));
+    } else {
+      endPage = Math.min(totP, Math.max(startPage, Math.round((pctVal / 100) * totP)));
+    }
+  } else if (useAudioTracking && audioHInput && audioMInput) {
+    const h = Math.max(0, Number(audioHInput.value || 0));
+    const m = Math.max(0, Number(audioMInput.value || 0));
+    audioEndMinutes = Math.min(audioTotal, Math.round(h * 60 + m));
+    endPage = Math.min(totP, Math.max(startPage, Math.round((audioEndMinutes / audioTotal) * totP)));
+  } else {
+    endPage = Number(pageInput ? pageInput.value : startPage);
+  }
+
   const totalSec = getTimerSeconds();
   const durationMin = Math.max(0.5, Math.round((totalSec / 60) * 100) / 100);
-  const isFocused = state.timer.isFocused !== false;
+  const isFocused = book && book.format === "Audio" ? false : (state.timer.isFocused !== false);
 
-  const book = state.books.find((b) => b.id === Number(bookId));
-  if (book && endPage > book.current_page) {
-    book.current_page = endPage;
+  if (book) {
+    if (endPage > book.current_page) book.current_page = endPage;
+    if (audioEndMinutes !== null && audioEndMinutes > Number(book.audio_current_minutes || 0)) {
+      book.audio_current_minutes = audioEndMinutes;
+    }
   }
   const pagesRead = Math.max(0, endPage - startPage);
   state.sessions.unshift({
@@ -1439,7 +1588,7 @@ window.confirmTimerSession = async function (bookId, startPage) {
     is_focused: isFocused
   });
 
-  state.timer = { bookId: null, isRunning: false, startTimeMs: null, accumulatedSec: 0, isFocused };
+  state.timer = { bookId: null, isRunning: false, startTimeMs: null, accumulatedSec: 0, isFocused: state.timer.isFocused };
   saveLocalTimer();
   saveLocalCache();
   renderReadingView();
@@ -1451,7 +1600,8 @@ window.confirmTimerSession = async function (bookId, startPage) {
       start_page: startPage,
       end_page: endPage,
       duration_minutes: durationMin,
-      is_focused: isFocused
+      is_focused: isFocused,
+      audio_end_minutes: audioEndMinutes
     });
     await window.syncFromServer();
   } catch (err) {
@@ -2195,11 +2345,22 @@ function renderAddView() {
       </div>
     ` : `
       <div class="card">
-        <div style="font-weight:700;margin-bottom:8px;">🔍 Rechercher par ISBN ou Titre + Auteur</div>
+        <div style="font-weight:700;margin-bottom:8px;">🔍 Recherche rapide ou Lien (Kindle, Audible, Kobo, Fnac)</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
+          ${[
+            { fmt: "Broché", label: "📖 Papier" },
+            { fmt: "Numérique", label: "📱 Liseuse" },
+            { fmt: "Audio", label: "🎧 Audio" }
+          ].map((opt) => {
+            const isSel = (opt.fmt === "Broché" && ["Broché", "Poche", "Relié"].includes(d.format)) || d.format === opt.fmt;
+            return `<button type="button" class="pill quick-fmt-pill ${isSel ? "active" : ""}" data-fmt="${opt.fmt}" style="padding:5px 11px;font-size:0.78rem;" onclick="window.setQuickAddFormat('${opt.fmt}')">${opt.label}</button>`;
+          }).join("")}
+        </div>
         <div style="display:flex;gap:8px;">
-          <input type="search" id="ext-search-q" placeholder="Ex: 9782080470973 ou Sanderson..." onkeydown="if(event.key==='Enter')window.runExternalSearch()" />
+          <input type="search" id="ext-search-q" value="${escapeHtml(state.extSearchQuery || "")}" placeholder="Titre, auteur, ISBN ou collez un lien..." oninput="window.onExtSearchInput(this.value)" onpaste="window.onExtSearchPaste(event)" onkeydown="if(event.key==='Enter')window.runExternalSearch()" />
           <button class="btn btn-primary" onclick="window.runExternalSearch()">Chercher</button>
         </div>
+        <div id="ext-autocomplete-box" style="margin-top:8px;"></div>
         ${resultsHtml ? `<div style="display:grid;gap:8px;margin-top:12px;">${resultsHtml}</div>` : ""}
       </div>
     `}
@@ -2256,7 +2417,7 @@ function renderAddView() {
       <div class="grid-3">
         <div>
           <label>Format</label>
-          <select id="add-format" onchange="window.syncAddDraft()">
+          <select id="add-format" onchange="window.onAddFormatChange()">
             ${["Broché", "Poche", "Relié", "Numérique", "Audio"].map((f) => `<option value="${f}" ${d.format === f ? "selected" : ""}>${f}</option>`).join("")}
           </select>
         </div>
@@ -2267,6 +2428,20 @@ function renderAddView() {
         <div>
           <label>Pays de l'auteur</label>
           <input id="add-country" value="${escapeHtml(d.author_country)}" oninput="window.syncAddDraft()" />
+        </div>
+      </div>
+
+      <div id="add-audio-dur-row" style="display:${d.format === "Audio" ? "block" : "none"};margin-top:8px;padding:10px;border-radius:10px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.35);">
+        <div style="font-size:0.8rem;font-weight:700;color:var(--primary-light);margin-bottom:6px;">🎧 Durée totale du livre audio (optionnel)</div>
+        <div class="grid-2">
+          <div>
+            <label style="font-size:0.74rem;">Heures</label>
+            <input type="number" min="0" id="add-audio-h" value="${escapeHtml(d.audio_duration_hours)}" oninput="window.syncAddDraft()" placeholder="Ex: 14" />
+          </div>
+          <div>
+            <label style="font-size:0.74rem;">Minutes</label>
+            <input type="number" min="0" max="59" id="add-audio-m" value="${escapeHtml(d.audio_duration_mins)}" oninput="window.syncAddDraft()" placeholder="Ex: 30" />
+          </div>
         </div>
       </div>
 
@@ -2368,6 +2543,8 @@ window.syncAddDraft = function () {
   state.addDraft.chapter_count = g("add-chaps");
   state.addDraft.price = g("add-price");
   state.addDraft.format = g("add-format");
+  state.addDraft.audio_duration_hours = g("add-audio-h");
+  state.addDraft.audio_duration_mins = g("add-audio-m");
   state.addDraft.publisher = g("add-publisher");
   state.addDraft.author_country = g("add-country");
   state.addDraft.isbn = g("add-isbn");
@@ -2408,6 +2585,7 @@ let isProcessingScan = false;
 
 function populateDraftFromMeta(meta) {
   if (!meta) return;
+  const resolvedFormat = meta.detected_format || state.quickFormatChoice || meta.format || state.addDraft.format || "Broché";
   state.addDraft = {
     ...state.addDraft,
     isbn: meta.isbn || state.addDraft.isbn || "",
@@ -2420,7 +2598,7 @@ function populateDraftFromMeta(meta) {
     publication_year: meta.publication_year || new Date().getFullYear(),
     page_count: meta.page_count || 320,
     price: meta.price !== null && meta.price !== undefined ? meta.price : "",
-    format: meta.format || "Broché",
+    format: resolvedFormat,
     genres: Array.isArray(meta.genres) ? meta.genres.join(", ") : (meta.genres || "Fantasy"),
     tags: Array.isArray(meta.tags) ? meta.tags.join(", ") : (meta.tags || ""),
     fantasy_subgenres: Array.isArray(meta.fantasy_subgenres) ? meta.fantasy_subgenres : [],
@@ -3061,10 +3239,125 @@ window.stopBarcodeCamera = async function () {
   if (state.activeTab === "add") renderAddView();
 };
 
+let extAutocompleteTimer = null;
+let extAutocompleteSeq = 0;
+
+window.setQuickAddFormat = function (fmt) {
+  state.quickFormatChoice = fmt;
+  state.addDraft.format = fmt;
+  const sel = document.getElementById("add-format");
+  if (sel) sel.value = fmt;
+  const audioRow = document.getElementById("add-audio-dur-row");
+  if (audioRow) audioRow.style.display = fmt === "Audio" ? "block" : "none";
+  document.querySelectorAll(".quick-fmt-pill").forEach((btn) => {
+    const bFmt = btn.getAttribute("data-fmt");
+    btn.classList.toggle("active", bFmt === fmt);
+  });
+};
+
+window.onAddFormatChange = function () {
+  window.syncAddDraft();
+  const fmt = state.addDraft.format;
+  state.quickFormatChoice = ["Numérique", "Audio"].includes(fmt) ? fmt : null;
+  const audioRow = document.getElementById("add-audio-dur-row");
+  if (audioRow) audioRow.style.display = fmt === "Audio" ? "block" : "none";
+  document.querySelectorAll(".quick-fmt-pill").forEach((btn) => {
+    const bFmt = btn.getAttribute("data-fmt");
+    const isSel = (bFmt === "Broché" && ["Broché", "Poche", "Relié"].includes(fmt)) || bFmt === fmt;
+    btn.classList.toggle("active", isSel);
+  });
+};
+
+function renderAutocompleteBox() {
+  const box = document.getElementById("ext-autocomplete-box");
+  if (!box) return;
+  const items = state.autocompleteResults || [];
+  if (items.length === 0) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;gap:6px;padding-top:4px;">
+      ${items.map((r, idx) => `
+        <div onclick="window.pickAutocompleteSuggestion(${idx})" style="cursor:pointer;display:flex;gap:10px;align-items:center;padding:7px 9px;border-radius:10px;background:rgba(15,23,42,0.72);border:1px solid var(--border);">
+          ${r.cover_url
+            ? `<img src="${escapeHtml(r.cover_url)}" style="width:36px;height:54px;object-fit:cover;border-radius:5px;flex-shrink:0;" />`
+            : `<div style="width:36px;height:54px;background:#334155;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">📖</div>`
+          }
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:0.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
+            <div style="font-size:0.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              ${escapeHtml(r.author || "Auteur inconnu")}${r.series_name ? ` • ${escapeHtml(r.series_name)}${r.series_volume ? ` #${r.series_volume}` : ""}` : ""}${r.popularity_score ? ` • ⭐ ${r.popularity_score}` : ""}
+            </div>
+          </div>
+          <span style="color:var(--primary-light);font-weight:700;font-size:0.76rem;flex-shrink:0;">Choisir</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+window.onExtSearchInput = function (val) {
+  state.extSearchQuery = val;
+  const q = String(val || "").trim();
+  if (extAutocompleteTimer) clearTimeout(extAutocompleteTimer);
+  const looksLikeUrl = /^https?:\/\//i.test(q) || /\b(?:amazon|audible|kobo|fnac|goodreads)\.[a-z]{2,}\//i.test(q);
+  const looksLikeIsbn = /^\d[\d\s-]{8,16}[\dXx]$/.test(q);
+  if (q.length < 3 || looksLikeUrl || looksLikeIsbn) {
+    state.autocompleteResults = [];
+    renderAutocompleteBox();
+    return;
+  }
+  const seq = ++extAutocompleteSeq;
+  extAutocompleteTimer = setTimeout(async () => {
+    try {
+      const res = await apiCall("quick_autocomplete", { q });
+      if (seq !== extAutocompleteSeq) return;
+      state.autocompleteResults = (res && res.suggestions) || [];
+      renderAutocompleteBox();
+    } catch {}
+  }, 320);
+};
+
+window.onExtSearchPaste = function (event) {
+  const pasted = (event.clipboardData || window.clipboardData)?.getData("text") || "";
+  if (/^https?:\/\//i.test(pasted.trim()) || /\b(?:amazon|audible|kobo|fnac|goodreads)\.[a-z]{2,}\//i.test(pasted)) {
+    setTimeout(() => window.runExternalSearch(), 60);
+  }
+};
+
+window.pickAutocompleteSuggestion = async function (idx) {
+  const item = (state.autocompleteResults || [])[idx];
+  if (!item) return;
+  state.autocompleteResults = [];
+  renderAutocompleteBox();
+  populateDraftFromMeta(item);
+  renderAddView();
+  forceSyncDraftToDom();
+  const fullQ = `${item.title} ${item.author || ""}`.trim();
+  state.extSearchQuery = fullQ;
+  setSyncStatus(true, "Enrichissement...");
+  try {
+    const data = await apiCall("enrich_book", { q: fullQ });
+    if (data && data.best) {
+      populateDraftFromMeta(data.best);
+      if (!state.addDraft.cover_url && item.cover_url) state.addDraft.cover_url = item.cover_url;
+    }
+    setSyncStatus(false, "Synchronisé");
+    renderAddView();
+    forceSyncDraftToDom();
+  } catch {
+    setSyncStatus(false, "Synchronisé");
+  }
+};
+
 window.runExternalSearch = async function () {
   const qEl = document.getElementById("ext-search-q");
   const q = qEl ? qEl.value.trim() : "";
   if (!q) return;
+  state.extSearchQuery = q;
+  state.autocompleteResults = [];
+  renderAutocompleteBox();
   setSyncStatus(true, "Recherche...");
   try {
     const data = await apiCall("enrich_book", { q });
@@ -3101,6 +3394,10 @@ window.submitNewBook = async function () {
     }
   }
 
+  const audioH = Math.max(0, Number(d.audio_duration_hours || 0));
+  const audioM = Math.max(0, Number(d.audio_duration_mins || 0));
+  const audioTotalMin = (d.format === "Audio" && (audioH > 0 || audioM > 0)) ? Math.round(audioH * 60 + audioM) : null;
+
   const payload = {
     isbn: d.isbn.trim() || null,
     title: d.title.trim(),
@@ -3114,6 +3411,7 @@ window.submitNewBook = async function () {
     chapter_count: d.chapter_count && Number(d.chapter_count) > 0 ? Number(d.chapter_count) : null,
     price: d.price !== "" && Number(d.price) > 0 ? Number(d.price) : null,
     format: d.format || "Broché",
+    audio_duration_minutes: audioTotalMin,
     genres: d.genres.split(",").map((s) => s.trim()).filter(Boolean),
     tags: d.tags.split(",").map((s) => s.trim()).filter(Boolean),
     fantasy_subgenres: d.fantasy_subgenres || [],
@@ -3128,10 +3426,15 @@ window.submitNewBook = async function () {
   try {
     await apiCall("add_book", payload);
     state.searchResults = [];
+    state.autocompleteResults = [];
+    state.extSearchQuery = "";
+    state.quickFormatChoice = null;
     state.lastScannedCode = "";
     state.addDraft.title = "";
     state.addDraft.isbn = "";
     state.addDraft.cover_url = "";
+    state.addDraft.audio_duration_hours = "";
+    state.addDraft.audio_duration_mins = "";
     await window.syncFromServer();
     window.switchTab(payload.status === "En cours" ? "reading" : "library");
   } catch (e) {
@@ -4247,43 +4550,131 @@ window.saveQuickNote = async function (bookId) {
   await window.syncFromServer();
 };
 
-window.openManualSessionModal = function (bookId) {
+window.openManualSessionModal = function (bookId, inputMode = "default") {
   const book = state.books.find((b) => b.id === Number(bookId));
   if (!book) return;
   const curP = Number(book.current_page || 0);
+  const totP = Math.max(1, Number(book.page_count || 1));
+  const isAudio = book.format === "Audio";
+  const isEbook = book.format === "Numérique";
+  const audioTotal = Number(book.audio_duration_minutes || 0);
+  const audioCur = Number(book.audio_current_minutes || 0);
+  const useAudioTracking = isAudio && audioTotal > 0;
+  const showPctToggle = useAudioTracking || isEbook || isAudio;
+  const isPctMode = showPctToggle && inputMode === "pct";
+
+  let inputsHtml = "";
+  if (isPctMode) {
+    const startPct = useAudioTracking
+      ? Math.round((audioCur / audioTotal) * 100)
+      : Math.round((curP / totP) * 100);
+    const endPct = Math.min(100, startPct + 10);
+    inputsHtml = `
+      <div class="grid-2">
+        <div>
+          <label>Départ (%)</label>
+          <input type="number" id="m-sess-start-pct" min="0" max="100" value="${startPct}" />
+        </div>
+        <div>
+          <label>Fin (%)</label>
+          <input type="number" id="m-sess-end-pct" min="0" max="100" value="${endPct}" />
+        </div>
+      </div>
+    `;
+  } else if (useAudioTracking) {
+    const sugEnd = Math.min(audioTotal, audioCur + 30);
+    inputsHtml = `
+      <div class="grid-2">
+        <div>
+          <label>Position fin (Heures)</label>
+          <input type="number" id="m-sess-audio-h" min="0" value="${Math.floor(sugEnd / 60)}" />
+        </div>
+        <div>
+          <label>Position fin (Minutes)</label>
+          <input type="number" id="m-sess-audio-m" min="0" max="59" value="${sugEnd % 60}" />
+        </div>
+      </div>
+      <div style="font-size:0.76rem;color:var(--muted);margin-top:4px;">Position actuelle : ${formatAudioHM(audioCur)} / ${formatAudioHM(audioTotal)}</div>
+    `;
+  } else {
+    inputsHtml = `
+      <div class="grid-2">
+        <div>
+          <label>Page départ</label>
+          <input type="number" id="m-sess-start" value="${curP}" />
+        </div>
+        <div>
+          <label>Page fin</label>
+          <input type="number" id="m-sess-end" value="${Math.min(totP, curP + 25)}" />
+        </div>
+      </div>
+    `;
+  }
+
   openModal(`
-    <h3 style="margin-top:0;">➕ Session manuelle</h3>
-    <label>Mode de lecture</label>
-    <select id="m-sess-mode">
-      <option value="focus">🎯 Lecture Focus (Concentrée)</option>
-      <option value="chill">🛋️ Lecture Détente (Transports, TV, interruptions)</option>
-    </select>
-    <div class="grid-2">
-      <div>
-        <label>Page départ</label>
-        <input type="number" id="m-sess-start" value="${curP}" />
-      </div>
-      <div>
-        <label>Page fin</label>
-        <input type="number" id="m-sess-end" value="${Math.min(book.page_count, curP + 25)}" />
-      </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+      <h3 style="margin:0;">➕ Session manuelle</h3>
+      ${showPctToggle ? `
+        <div style="display:flex;gap:4px;">
+          <button class="pill ${!isPctMode ? "active" : ""}" style="padding:3px 9px;font-size:0.74rem;" onclick="window.openManualSessionModal(${book.id}, 'default')">${useAudioTracking ? "🎧 h / min" : "📖 Pages"}</button>
+          <button class="pill ${isPctMode ? "active" : ""}" style="padding:3px 9px;font-size:0.74rem;" onclick="window.openManualSessionModal(${book.id}, 'pct')">📊 %</button>
+        </div>
+      ` : ""}
     </div>
-    <label>Durée (minutes)</label>
+    ${!isAudio ? `
+      <label>Mode de lecture</label>
+      <select id="m-sess-mode">
+        <option value="focus">🎯 Lecture Focus (Concentrée)</option>
+        <option value="chill">🛋️ Lecture Détente (Transports, TV, interruptions)</option>
+      </select>
+    ` : `<div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">🎧 Session audio (exclue de la vitesse Focus pages/h).</div>`}
+    ${inputsHtml}
+    <label>Durée réelle de la session (minutes)</label>
     <input type="number" id="m-sess-dur" value="30" />
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;">
-      <button class="btn btn-primary" onclick="window.saveManualSession(${book.id})">💾 Ajouter</button>
+      <button class="btn btn-primary" onclick="window.saveManualSession(${book.id}, '${isPctMode ? "pct" : "default"}')">💾 Ajouter</button>
       <button class="btn" onclick="window.closeModal()">Annuler</button>
     </div>
   `);
 };
 
-window.saveManualSession = async function (bookId) {
-  const is_focused = document.getElementById("m-sess-mode").value === "focus";
-  const start_page = Number(document.getElementById("m-sess-start").value || 0);
-  const end_page = Number(document.getElementById("m-sess-end").value || start_page);
-  const duration_minutes = Number(document.getElementById("m-sess-dur").value || 30);
+window.saveManualSession = async function (bookId, inputMode = "default") {
+  const book = state.books.find((b) => b.id === Number(bookId));
+  const totP = Math.max(1, Number((book && book.page_count) || 1));
+  const curP = Number((book && book.current_page) || 0);
+  const isAudio = Boolean(book && book.format === "Audio");
+  const audioTotal = Number((book && book.audio_duration_minutes) || 0);
+  const useAudioTracking = isAudio && audioTotal > 0;
+
+  const modeEl = document.getElementById("m-sess-mode");
+  const is_focused = isAudio ? false : (modeEl ? modeEl.value === "focus" : true);
+  const duration_minutes = Math.max(0.5, Number(document.getElementById("m-sess-dur").value || 30));
+
+  let start_page = curP;
+  let end_page = curP;
+  let audio_end_minutes = null;
+
+  if (inputMode === "pct") {
+    const sPct = Math.max(0, Math.min(100, Number(document.getElementById("m-sess-start-pct").value || 0)));
+    const ePct = Math.max(sPct, Math.min(100, Number(document.getElementById("m-sess-end-pct").value || sPct)));
+    start_page = Math.round((sPct / 100) * totP);
+    end_page = Math.round((ePct / 100) * totP);
+    if (useAudioTracking) {
+      audio_end_minutes = Math.min(audioTotal, Math.round((ePct / 100) * audioTotal));
+    }
+  } else if (useAudioTracking) {
+    const h = Math.max(0, Number(document.getElementById("m-sess-audio-h").value || 0));
+    const m = Math.max(0, Number(document.getElementById("m-sess-audio-m").value || 0));
+    audio_end_minutes = Math.min(audioTotal, Math.round(h * 60 + m));
+    start_page = curP;
+    end_page = Math.min(totP, Math.max(curP, Math.round((audio_end_minutes / audioTotal) * totP)));
+  } else {
+    start_page = Number(document.getElementById("m-sess-start").value || 0);
+    end_page = Number(document.getElementById("m-sess-end").value || start_page);
+  }
+
   window.closeModal();
-  await apiCall("add_session", { book_id: bookId, start_page, end_page, duration_minutes, is_focused });
+  await apiCall("add_session", { book_id: bookId, start_page, end_page, duration_minutes, is_focused, audio_end_minutes });
   await window.syncFromServer();
 };
 
@@ -4352,7 +4743,7 @@ window.openBookDetailModal = function (bookId, subTab = "info") {
       <div class="grid-3">
         <div>
           <label>Format</label>
-          <select id="m-ed-format">
+          <select id="m-ed-format" onchange="const r=document.getElementById('m-ed-audio-row');if(r)r.style.display=this.value==='Audio'?'block':'none';">
             ${formats.map((f) => `<option value="${f}" ${book.format === f ? "selected" : ""}>${f}</option>`).join("")}
           </select>
         </div>
@@ -4363,6 +4754,30 @@ window.openBookDetailModal = function (bookId, subTab = "info") {
         <div>
           <label>Mois PAL</label>
           <input type="month" id="m-ed-pal" value="${escapeHtml(book.pal_month || "")}" />
+        </div>
+      </div>
+
+      <div id="m-ed-audio-row" style="display:${book.format === "Audio" ? "block" : "none"};margin-top:8px;padding:10px;border-radius:10px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.35);">
+        <div style="font-size:0.8rem;font-weight:700;color:var(--primary-light);margin-bottom:6px;">🎧 Suivi Livre Audio (optionnel)</div>
+        <div class="grid-2">
+          <div>
+            <label style="font-size:0.74rem;">Durée totale (h)</label>
+            <input type="number" min="0" id="m-ed-audio-th" value="${book.audio_duration_minutes ? Math.floor(book.audio_duration_minutes / 60) : ""}" placeholder="Ex: 14" />
+          </div>
+          <div>
+            <label style="font-size:0.74rem;">Durée totale (min)</label>
+            <input type="number" min="0" max="59" id="m-ed-audio-tm" value="${book.audio_duration_minutes ? (book.audio_duration_minutes % 60) : ""}" placeholder="Ex: 30" />
+          </div>
+        </div>
+        <div class="grid-2" style="margin-top:6px;">
+          <div>
+            <label style="font-size:0.74rem;">Écouté (h)</label>
+            <input type="number" min="0" id="m-ed-audio-ch" value="${Math.floor(Number(book.audio_current_minutes || 0) / 60)}" />
+          </div>
+          <div>
+            <label style="font-size:0.74rem;">Écouté (min)</label>
+            <input type="number" min="0" max="59" id="m-ed-audio-cm" value="${Number(book.audio_current_minutes || 0) % 60}" />
+          </div>
         </div>
       </div>
 
@@ -4494,6 +4909,14 @@ window.saveBookEdits = async function (bookId) {
   const pal_month = g("m-ed-pal") || null;
   const pal_year = pal_month ? Number(pal_month.slice(0, 4)) : null;
 
+  const fmt = g("m-ed-format");
+  const aTH = Math.max(0, Number(g("m-ed-audio-th") || 0));
+  const aTM = Math.max(0, Number(g("m-ed-audio-tm") || 0));
+  const aCH = Math.max(0, Number(g("m-ed-audio-ch") || 0));
+  const aCM = Math.max(0, Number(g("m-ed-audio-cm") || 0));
+  const audioTotalMin = (fmt === "Audio" && (aTH > 0 || aTM > 0)) ? Math.round(aTH * 60 + aTM) : null;
+  const audioCurMin = fmt === "Audio" ? Math.round(aCH * 60 + aCM) : 0;
+
   const data = {
     title: g("m-ed-title").trim(),
     author: g("m-ed-author").trim(),
@@ -4502,7 +4925,9 @@ window.saveBookEdits = async function (bookId) {
     status: g("m-ed-status"),
     current_page: Number(g("m-ed-page") || 0),
     page_count: Math.max(1, Number(g("m-ed-totpages") || 1)),
-    format: g("m-ed-format"),
+    format: fmt,
+    audio_duration_minutes: audioTotalMin,
+    audio_current_minutes: audioCurMin,
     price: g("m-ed-price") !== "" ? Number(g("m-ed-price")) : null,
     pal_month,
     pal_year,
