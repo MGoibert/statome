@@ -223,6 +223,11 @@ let state = {
   yearOffset: 0,
   // Modal subtab
   bookModalTab: "info", // "info" | "eval" | "notes"
+  // Goals
+  goals: {
+    annual_books: 24,
+    daily_minutes: 30
+  },
   // Timer
   timer: {
     bookId: null,
@@ -244,6 +249,12 @@ function loadLocalCache() {
       state.books = parsed.books || [];
       state.sessions = parsed.sessions || [];
       state.notes = parsed.notes || [];
+      if (parsed.goals) {
+        state.goals = {
+          annual_books: Number(parsed.goals.annual_books || 24),
+          daily_minutes: Number(parsed.goals.daily_minutes || 30)
+        };
+      }
     }
     const rawTimer = localStorage.getItem(TIMER_KEY);
     if (rawTimer) {
@@ -269,6 +280,7 @@ function saveLocalCache() {
         books: state.books,
         sessions: state.sessions,
         notes: state.notes,
+        goals: state.goals,
         updatedAt: Date.now()
       })
     );
@@ -344,6 +356,12 @@ window.syncFromServer = async function (manual = false) {
     state.books = data.books || [];
     state.sessions = data.sessions || [];
     state.notes = data.notes || [];
+    if (data.goals) {
+      state.goals = {
+        annual_books: Number(data.goals.annual_books || 24),
+        daily_minutes: Number(data.goals.daily_minutes || 30)
+      };
+    }
     if (data.user) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
     }
@@ -403,6 +421,235 @@ function computeSpeeds(bookId = null) {
     chillCount: chillAll.length
   };
 }
+
+function formatHoursMinutes(hours) {
+  if (!hours || hours <= 0) return "~0 min";
+  const hInt = Math.floor(hours);
+  const mInt = Math.round((hours - hInt) * 60);
+  if (mInt === 60) return `~${hInt + 1}h 00`;
+  return hInt > 0 ? `~${hInt}h ${String(mInt).padStart(2, "0")}` : `~${Math.max(1, mInt)} min`;
+}
+
+function localDateKey(dInput) {
+  const d = dInput instanceof Date ? dInput : new Date(dInput);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function computeReadingStreakAndGoals() {
+  const activeDaySet = new Set();
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const currentYear = today.getFullYear();
+
+  let todayMinutes = 0;
+  let todayPages = 0;
+
+  for (const s of state.sessions) {
+    const mins = Number(s.duration_minutes || 0);
+    const pages = Number(s.pages_read || 0);
+    if (mins <= 0 && pages <= 0) continue;
+    const dk = localDateKey(s.start_time);
+    if (!dk) continue;
+    activeDaySet.add(dk);
+    if (dk === todayKey) {
+      todayMinutes += mins;
+      todayPages += pages;
+    }
+  }
+
+  const readToday = activeDaySet.has(todayKey);
+
+  // Calcul de la série en cours (si pas encore lu aujourd'hui, on part d'hier pour ne pas casser la série avant la lecture du soir)
+  let currentStreak = 0;
+  const cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (!readToday) cursor.setDate(cursor.getDate() - 1);
+  while (activeDaySet.has(localDateKey(cursor))) {
+    currentStreak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  // Record historique absolu de jours consécutifs
+  let bestStreak = currentStreak;
+  const sortedDays = Array.from(activeDaySet).sort();
+  let run = 0;
+  let prevDate = null;
+  for (const dk of sortedDays) {
+    const [y, m, day] = dk.split("-").map(Number);
+    const curDate = new Date(y, m - 1, day);
+    if (prevDate) {
+      const diffDays = Math.round((curDate - prevDate) / 86400000);
+      run = diffDays === 1 ? run + 1 : 1;
+    } else {
+      run = 1;
+    }
+    if (run > bestStreak) bestStreak = run;
+    prevDate = curDate;
+  }
+
+  const yearBooksFinished = state.books.filter((b) => {
+    if (b.status !== "Terminé") return false;
+    if (b.finished_at) return String(b.finished_at).startsWith(String(currentYear));
+    return false;
+  }).length;
+
+  const annualGoal = Math.max(1, Number((state.goals && state.goals.annual_books) || 24));
+  const dailyGoal = Math.max(5, Number((state.goals && state.goals.daily_minutes) || 30));
+
+  return {
+    currentStreak,
+    bestStreak,
+    readToday,
+    todayMinutes: Math.round(todayMinutes),
+    todayPages,
+    yearBooksFinished,
+    currentYear,
+    annualGoal,
+    dailyGoal
+  };
+}
+
+function computeCostPerHour(books, sessions) {
+  const minsByBook = {};
+  for (const s of sessions) {
+    const bid = Number(s.book_id);
+    minsByBook[bid] = (minsByBook[bid] || 0) + Number(s.duration_minutes || 0);
+  }
+
+  let totalCost = 0;
+  let totalHours = 0;
+  let trackedCount = 0;
+  let bestDeal = null;
+
+  for (const b of books) {
+    const price = Number(b.price || 0);
+    const mins = minsByBook[Number(b.id)] || 0;
+    if (price > 0 && mins >= 5) {
+      const hrs = mins / 60;
+      const cph = price / hrs;
+      totalCost += price;
+      totalHours += hrs;
+      trackedCount++;
+      if (!bestDeal || cph < bestDeal.costPerHour) {
+        bestDeal = { title: b.title, costPerHour: cph, hours: hrs, price };
+      }
+    }
+  }
+
+  return {
+    avgCostPerHour: totalHours > 0 ? totalCost / totalHours : null,
+    totalHours,
+    trackedCount,
+    bestDeal
+  };
+}
+
+function renderStreakGoalsBannerHtml() {
+  const sg = computeReadingStreakAndGoals();
+  const dailyPct = Math.min(100, Math.round((sg.todayMinutes / sg.dailyGoal) * 100));
+  const yearPct = Math.min(100, Math.round((sg.yearBooksFinished / sg.annualGoal) * 100));
+  const streakColor = sg.currentStreak > 0 ? "#F59E0B" : "var(--muted)";
+
+  return `
+    <div class="card" style="padding:12px 14px;margin-bottom:12px;border-color:rgba(99,102,241,0.35);">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:1.15rem;font-weight:800;color:${streakColor};">🔥 ${sg.currentStreak} j.</span>
+          <span style="font-size:0.75rem;color:var(--muted);">
+            Record : <b>${sg.bestStreak} j.</b> • ${sg.readToday ? '<span style="color:#34D399;">✅ Lu aujourd\'hui</span>' : '<span style="color:#FBBF24;">⏳ À lire aujourd\'hui</span>'}
+          </span>
+        </div>
+        <button class="btn" style="padding:4px 9px;font-size:0.74rem;" onclick="window.openGoalsModal()">🎯 Objectifs</button>
+      </div>
+      <div class="grid-2" style="gap:10px;">
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:0.73rem;color:var(--muted);margin-bottom:3px;">
+            <span>⏱️ Aujourd'hui</span>
+            <span><b style="color:${dailyPct >= 100 ? "#34D399" : "var(--text)"};">${sg.todayMinutes}</b> / ${sg.dailyGoal} min</span>
+          </div>
+          <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${dailyPct}%;background:${dailyPct >= 100 ? "#10B981" : "var(--primary)"};"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:0.73rem;color:var(--muted);margin-bottom:3px;">
+            <span>📚 Objectif ${sg.currentYear}</span>
+            <span><b style="color:${yearPct >= 100 ? "#34D399" : "var(--text)"};">${sg.yearBooksFinished}</b> / ${sg.annualGoal} livres</span>
+          </div>
+          <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${yearPct}%;background:#8B5CF6;"></div></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.openGoalsModal = function () {
+  const sg = computeReadingStreakAndGoals();
+  openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">🎯 Mes Objectifs de Lecture</h3>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    <div style="font-size:0.82rem;color:var(--muted);margin:8px 0 12px;">
+      Personnalisez vos objectifs annuels et quotidiens pour suivre votre régularité et votre série 🔥.
+    </div>
+    <label>📚 Objectif de livres terminés en ${sg.currentYear}</label>
+    <input type="number" id="goal-annual-books" min="1" max="500" value="${sg.annualGoal}" />
+    <label>⏱️ Objectif de lecture quotidien (minutes / jour)</label>
+    <input type="number" id="goal-daily-minutes" min="5" max="600" step="5" value="${sg.dailyGoal}" />
+    <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:12px;" onclick="window.saveGoalsForm()">
+      💾 Enregistrer mes objectifs
+    </button>
+  `);
+};
+
+window.saveGoalsForm = async function () {
+  const annual_books = Math.max(1, Math.min(500, Number(document.getElementById("goal-annual-books").value || 24)));
+  const daily_minutes = Math.max(5, Math.min(600, Number(document.getElementById("goal-daily-minutes").value || 30)));
+  state.goals = { annual_books, daily_minutes };
+  saveLocalCache();
+  window.closeModal();
+  renderCurrentTab();
+  try {
+    await apiCall("save_goals", { annual_books, daily_minutes });
+  } catch (e) {
+    console.warn("save_goals warning:", e);
+  }
+};
+
+window.openTargetDateModal = function (bookId) {
+  const book = state.books.find((b) => b.id === Number(bookId));
+  if (!book) return;
+  const curVal = book.target_finish_date || "";
+  const minDate = localDateKey(new Date());
+  openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">🎯 Date cible de fin</h3>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    <div style="font-size:0.82rem;color:var(--muted);margin:8px 0 12px;">
+      Idéal pour un club de lecture ou une lecture commune : StaTome calcule automatiquement combien de pages lire par jour pour finir <b>${escapeHtml(book.title)}</b> à temps !
+    </div>
+    <label>Date souhaitée pour terminer ce livre</label>
+    <input type="date" id="book-target-date-input" min="${minDate}" value="${escapeHtml(curVal)}" />
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;">
+      <button class="btn btn-primary" onclick="window.saveBookTargetDate(${book.id}, false)">💾 Enregistrer</button>
+      <button class="btn btn-danger" onclick="window.saveBookTargetDate(${book.id}, true)">🗑️ Effacer</button>
+    </div>
+  `);
+};
+
+window.saveBookTargetDate = async function (bookId, clearDate = false) {
+  const val = clearDate ? "" : (document.getElementById("book-target-date-input").value || "");
+  const book = state.books.find((b) => b.id === Number(bookId));
+  if (book) book.target_finish_date = val;
+  saveLocalCache();
+  window.closeModal();
+  renderCurrentTab();
+  try {
+    await apiCall("update_book", { book_id: bookId, data: { target_finish_date: val || null } });
+  } catch (e) {
+    alert("Erreur lors de la sauvegarde : " + e.message);
+  }
+};
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -466,6 +713,7 @@ function renderReadingView() {
 
   if (currentBooks.length === 0) {
     el.innerHTML = `
+      ${renderStreakGoalsBannerHtml()}
       <div class="card" style="text-align:center; padding:32px 18px;">
         <div style="font-size:2.8rem;">📖</div>
         <h3 style="margin:10px 0 6px;">Aucune lecture en cours</h3>
@@ -490,11 +738,37 @@ function renderReadingView() {
   const pct = Math.min(100, Math.round((curP / totP) * 1000) / 10);
   const pagesLeft = Math.max(0, totP - curP);
 
-  const { refFocusSpeed } = computeSpeeds(book.id);
-  const hoursLeft = refFocusSpeed > 0 ? pagesLeft / refFocusSpeed : 0;
-  const hInt = Math.floor(hoursLeft);
-  const mInt = Math.round((hoursLeft - hInt) * 60);
-  const estStr = hInt > 0 ? `~${hInt}h ${String(mInt).padStart(2, "0")}min` : `~${mInt} min`;
+  const { refFocusSpeed, globalChillSpeed } = computeSpeeds(book.id);
+  const hoursLeftFocus = refFocusSpeed > 0 ? pagesLeft / refFocusSpeed : 0;
+  const estFocusStr = formatHoursMinutes(hoursLeftFocus);
+  const chillEstPart = globalChillSpeed > 0
+    ? ` • 🛋️ <b>${formatHoursMinutes(pagesLeft / globalChillSpeed)}</b> (${Math.round(globalChillSpeed)} p/h)`
+    : "";
+
+  let targetDateHtml = `
+    <div style="margin-top:7px;">
+      <button class="btn" style="padding:4px 9px;font-size:0.73rem;color:var(--primary-light);border-style:dashed;" onclick="window.openTargetDateModal(${book.id})">
+        🎯 Fixer une date cible (club de lecture / défi)
+      </button>
+    </div>
+  `;
+  if (book.target_finish_date && pagesLeft > 0) {
+    const todayMid = new Date();
+    todayMid.setHours(0, 0, 0, 0);
+    const [ty, tm, td] = book.target_finish_date.split("-").map(Number);
+    const targetDt = new Date(ty, tm - 1, td);
+    const daysLeft = Math.max(1, Math.ceil((targetDt - todayMid) / 86400000) + 1);
+    const pPerDay = Math.ceil(pagesLeft / daysLeft);
+    const minPerDay = Math.max(1, Math.round((pPerDay / refFocusSpeed) * 60));
+    const dateFr = `${td} ${FRENCH_MONTHS[tm - 1].slice(0, 4)}.`;
+    const isOverdue = targetDt < todayMid;
+    targetDateHtml = `
+      <div onclick="window.openTargetDateModal(${book.id})" style="cursor:pointer;margin-top:8px;padding:6px 9px;border-radius:8px;background:${isOverdue ? "rgba(239,68,68,0.14)" : "rgba(99,102,241,0.14)"};border:1px solid ${isOverdue ? "rgba(239,68,68,0.4)" : "rgba(99,102,241,0.38)"};font-size:0.75rem;color:${isOverdue ? "#fca5a5" : "#c7d2fe"};display:flex;justify-content:space-between;align-items:center;gap:6px;">
+        <span>${isOverdue ? "⚠️ Date cible dépassée" : `🎯 Finir avant le <b>${dateFr}</b> (${daysLeft} j.) : <b>${pPerDay} p./jour</b> (~${minPerDay} min/j)`}</span>
+        <span>✏️</span>
+      </div>
+    `;
+  }
 
   const selectorHtml = currentBooks.length > 1
     ? `<select style="margin-bottom:12px;" onchange="window.selectActiveBook(this.value)">
@@ -540,6 +814,7 @@ function renderReadingView() {
   const bookNotes = state.notes.filter((n) => Number(n.book_id) === book.id);
 
   el.innerHTML = `
+    ${renderStreakGoalsBannerHtml()}
     ${selectorHtml}
     <div class="card">
       <div class="book-hero">
@@ -555,7 +830,10 @@ function renderReadingView() {
           <div class="progress-track">
             <div class="progress-fill" style="width:${pct}%"></div>
           </div>
-          <div class="time-est">⏳ ${pagesLeft} p. restantes (${estStr} à ${Math.round(refFocusSpeed)} p/h 🎯)</div>
+          <div class="time-est">
+            ⏳ <b>${pagesLeft} p.</b> restantes • 🎯 <b>${estFocusStr}</b> (${Math.round(refFocusSpeed)} p/h)${chillEstPart}
+          </div>
+          ${targetDateHtml}
         </div>
       </div>
     </div>
@@ -2351,6 +2629,7 @@ function renderStatsRhythmTab() {
   const dailyPagesNeeded = pagesRemainingPal / daysLeft;
 
   box.innerHTML = `
+    ${renderStreakGoalsBannerHtml()}
     <div class="kpi-grid kpi-grid-4">
       <div class="kpi-card" style="border-color:rgba(99,102,241,0.5);">
         <div class="kpi-label">🎯 Vitesse Focus</div>
@@ -2498,9 +2777,10 @@ function renderStatsCatalogTab(books) {
   const totalVal = prices.reduce((a, b) => a + b, 0);
   const avgPrice = prices.length > 0 ? totalVal / prices.length : 0;
   const totalPages = books.reduce((a, b) => a + Number(b.page_count || 0), 0);
+  const cph = computeCostPerHour(books, state.sessions);
 
   box.innerHTML = `
-    <div class="kpi-grid kpi-grid-3">
+    <div class="kpi-grid kpi-grid-4">
       <div class="kpi-card">
         <div class="kpi-label">💶 Valeur financière</div>
         <div class="kpi-value" style="color:#34D399;">${totalVal.toFixed(2)} €</div>
@@ -2511,12 +2791,24 @@ function renderStatsCatalogTab(books) {
         <div class="kpi-value" style="color:#38BDF8;">${avgPrice.toFixed(2)} €</div>
         <div class="kpi-sub">par ouvrage</div>
       </div>
+      <div class="kpi-card" style="border-color:rgba(245,158,11,0.45);">
+        <div class="kpi-label">🎬 Coût / heure de plaisir</div>
+        <div class="kpi-value" style="color:#FBBF24;">${cph.avgCostPerHour !== null ? cph.avgCostPerHour.toFixed(2) + " €/h" : "—"}</div>
+        <div class="kpi-sub">${cph.bestDeal ? `Record : ${escapeHtml(cph.bestDeal.title.slice(0, 18))} (${cph.bestDeal.costPerHour.toFixed(2)} €/h)` : "Prix + sessions requis"}</div>
+      </div>
       <div class="kpi-card">
         <div class="kpi-label">📄 Pagination totale</div>
         <div class="kpi-value" style="color:#818CF8;">${totalPages.toLocaleString("fr-FR")} p.</div>
         <div class="kpi-sub">${books.length} livre(s) dans le périmètre</div>
       </div>
     </div>
+    ${cph.avgCostPerHour !== null ? `
+      <div class="card" style="padding:10px 14px;margin-bottom:12px;border-color:rgba(245,158,11,0.35);font-size:0.81rem;color:var(--muted);">
+        💡 Sur <b>${cph.trackedCount}</b> livre(s) chiffré(s) et chronométré(s) (<b>${cph.totalHours.toFixed(1)} h</b> lues), vos lectures vous reviennent à
+        <b style="color:#FBBF24;">${cph.avgCostPerHour.toFixed(2)} € / heure</b>
+        ${cph.avgCostPerHour < 6 ? `— soit <b style="color:#34D399;">${(6 / Math.max(0.1, cph.avgCostPerHour)).toFixed(1)}× moins cher</b> qu'une place de cinéma (~6 €/h) !` : "."}
+      </div>
+    ` : ""}
 
     <div class="chart-card">
       <div class="chart-title">Top 10 des Genres</div>

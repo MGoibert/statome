@@ -95,6 +95,7 @@ function normalizeBook(row) {
     current_page: Number(row.current_page || 0),
     started_at: row.started_at ? String(row.started_at).slice(0, 10) : null,
     finished_at: row.finished_at ? String(row.finished_at).slice(0, 10) : null,
+    target_finish_date: row.target_finish_date ? String(row.target_finish_date).slice(0, 10) : "",
     rating_global: row.rating_global !== null && row.rating_global !== undefined ? Number(row.rating_global) : null,
     rating_pacing: row.rating_pacing !== null && row.rating_pacing !== undefined ? Number(row.rating_pacing) : null,
     rating_chars: row.rating_chars !== null && row.rating_chars !== undefined ? Number(row.rating_chars) : null,
@@ -1121,6 +1122,17 @@ function extractToken(headers, query, body) {
   return (body && body.token) || (query && query.token) || "";
 }
 
+let goalsSchemaReady = false;
+async function ensureGoalsSchema(connStr) {
+  if (goalsSchemaReady) return;
+  await Promise.all([
+    neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS annual_books_goal INTEGER DEFAULT 24").catch(() => {}),
+    neonQuery(connStr, "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_minutes_goal INTEGER DEFAULT 30").catch(() => {}),
+    neonQuery(connStr, "ALTER TABLE books ADD COLUMN IF NOT EXISTS target_finish_date TEXT").catch(() => {})
+  ]);
+  goalsSchemaReady = true;
+}
+
 async function getBetaSettings(connStr) {
   try {
     const rows = await neonQuery(connStr, "SELECT * FROM app_settings WHERE id = 1");
@@ -1417,12 +1429,20 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
     }
 
     if (action === "bootstrap") {
-      const [rawBooks, rawSessions, rawNotes, rawTimer] = await Promise.all([
+      await ensureGoalsSchema(connStr);
+      const [rawBooks, rawSessions, rawNotes, rawTimer, rawUser] = await Promise.all([
         neonQuery(connStr, "SELECT * FROM books WHERE user_id = $1 ORDER BY id DESC", [userId]),
         neonQuery(connStr, "SELECT * FROM reading_sessions WHERE user_id = $1 ORDER BY start_time DESC", [userId]),
         neonQuery(connStr, "SELECT * FROM book_notes WHERE user_id = $1 ORDER BY page_number ASC NULLS LAST, created_at DESC", [userId]),
-        neonQuery(connStr, "SELECT * FROM active_timer WHERE id = $1 OR user_id = $1 ORDER BY updated_at DESC LIMIT 1", [userId]).catch(() => [])
+        neonQuery(connStr, "SELECT * FROM active_timer WHERE id = $1 OR user_id = $1 ORDER BY updated_at DESC LIMIT 1", [userId]).catch(() => []),
+        neonQuery(connStr, "SELECT annual_books_goal, daily_minutes_goal FROM users WHERE id = $1 LIMIT 1", [userId]).catch(() => [])
       ]);
+
+      const uRow = (rawUser && rawUser[0]) || {};
+      const goals = {
+        annual_books: Number(uRow.annual_books_goal || 24),
+        daily_minutes: Number(uRow.daily_minutes_goal || 30)
+      };
 
       const books = rawBooks.map(normalizeBook);
       const booksById = {};
@@ -1451,12 +1471,25 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         data: {
           ok: true,
           user: { ...authUser, admin: isAdmin },
+          goals,
           books,
           sessions,
           notes,
           active_timer: activeTimer
         }
       };
+    }
+
+    if (action === "save_goals") {
+      await ensureGoalsSchema(connStr);
+      const annualBooks = Math.max(1, Math.min(500, Number(body.annual_books || 24)));
+      const dailyMinutes = Math.max(5, Math.min(600, Number(body.daily_minutes || 30)));
+      await neonQuery(
+        connStr,
+        "UPDATE users SET annual_books_goal = $1, daily_minutes_goal = $2 WHERE id = $3",
+        [annualBooks, dailyMinutes, userId]
+      );
+      return { status: 200, data: { ok: true, goals: { annual_books: annualBooks, daily_minutes: dailyMinutes } } };
     }
 
     if (action === "save_timer") {
@@ -1595,6 +1628,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
     }
 
     if (action === "update_book") {
+      await ensureGoalsSchema(connStr);
       const bookId = Number(body.book_id);
       const data = body.data || {};
       const sets = [];
@@ -1605,7 +1639,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
         "isbn", "title", "author", "author_country", "publisher", "publication_year",
         "series_name", "series_volume", "page_count", "chapter_count", "current_page",
         "status", "pal_month", "pal_year", "format", "price", "popularity_score", "cover_url",
-        "started_at", "finished_at", "rating_global", "rating_pacing", "rating_chars",
+        "started_at", "finished_at", "target_finish_date", "rating_global", "rating_pacing", "rating_chars",
         "rating_world", "rating_writing", "rating_plot", "final_review",
         "genres", "tags", "fantasy_subgenre"
       ];
