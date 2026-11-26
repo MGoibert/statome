@@ -24,23 +24,13 @@
 
 ## 🚀 P3 — Croissance organique & Viralité (Bookstagram / BookTok)
 
-- [ ] **Exports visuels « Story-Ready » en 1 clic**
-  - **Calendrier mensuel en couvertures** (déjà présent dans l'onglet Stats) exportable en image propre sans barre de navigation.
-  - **Fiche Avis + Graphique Radar 6 critères** : couverture + note globale + radar + mini-critique prêts à poster en story.
-  - **Carte Bilan du Mois / de l'Année (Wrap-up)** : mosaïque des couvertures lues, pages totales, temps de lecture, coup de cœur + discret logo *StaTome*.
-  - **Cartes Citations** : mise en page élégante d'une citation enregistrée sur fond sombre.
+- [x] **Exports visuels « Story-Ready » en 1 clic** *(livré sur `staging` — Calendrier mensuel en couvertures, Fiche Avis + Radar 6 critères, Carte Bilan mois/année, Cartes Citations & Carte ADN, 1080×1920 PNG + partage natif)*
 
 ---
 
 ## 🌟 P3 bis — Facteurs différenciants exclusifs (Introuvables chez les concurrents)
 
-- [ ] **🧬 Analyseur de Profil Lecteur complet (« ADN StaTome »)**
-  - Portrait analytique holistique combinant **toutes** les données de lecture :
-    - **Moteurs de tes coups de cœur** : corrélation entre tes 6 critères (*Intrigue, Personnages, Worldbuilding, Plume, Rythme, Émotion*) et ta Note Globale (ex. *« Tu pardonnes un rythme lent si les personnages et le worldbuilding dépassent 4/5 »*).
-    - **Dynamique de vitesse au fil d'un livre** : détection de ta courbe d'engagement (*début / milieu / fin* — ex. baisse de vitesse quand tu te désintéresses, accélération sur le dernier tiers d'un page-turner).
-    - **Style & Habitudes horaires** : lecteur du matin, de la pause déj, du soir ou nocturne ; semaine vs week-end ; ratio *Focus* vs *Détente* ; créneau horaire où ta vitesse est maximale.
-    - **Empreinte Genres & Sous-genres** : comparaison entre ce que tu lis le plus, ce que tu notes le mieux, et tes taux d'abandon (DNF) par genre/sous-genre.
-    - **Analyse de tes notes & critiques écrites** : extraction des thèmes et motifs récurrents dans tes commentaires, théories et critiques finales.
+- [x] **🧬 Analyseur de Profil Lecteur complet (« ADN StaTome »)** *(livré sur `staging` — onglet `Stats → 🧬 Mon ADN` : archétype, moteurs de coups de cœur, dynamique Début/Milieu/Fin, habitudes horaires, empreinte genres/DNF et thèmes récurrents des notes)*
 - [x] **⏱️ Temps restant personnalisé (Focus / Détente) & Planificateur Date Cible** *(livré)*
 - [x] **💶 Coût par heure de plaisir (€/heure)** *(livré)*
 - [x] **🎲 Piocheur de PAL (Mood Picker intelligent)** *(livré)*

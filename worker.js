@@ -16,6 +16,44 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // 0. Safe Cover Image Proxy for CORS-free Story Canvas Exports
+    if (url.pathname === "/api/cover-proxy") {
+      const target = url.searchParams.get("url") || "";
+      try {
+        const parsed = new URL(target);
+        const host = parsed.hostname.toLowerCase();
+        const allowedSuffixes = [
+          "bnf.fr", "media-amazon.com", "ssl-images-amazon.com", "gr-assets.com",
+          "googleapis.com", "googleusercontent.com", "google.com", "mzstatic.com",
+          "openlibrary.org", "fnac-static.com", "di-static.com"
+        ];
+        const isAllowed = parsed.protocol === "https:" && allowedSuffixes.some((s) => host === s || host.endsWith("." + s));
+        if (!isAllowed) {
+          return new Response("Forbidden host", { status: 403 });
+        }
+        const imgResp = await fetch(target, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; StaTome/1.0)" }
+        });
+        if (!imgResp.ok) {
+          return new Response("Upstream error", { status: imgResp.status });
+        }
+        const contentType = imgResp.headers.get("content-type") || "image/jpeg";
+        if (!contentType.startsWith("image/")) {
+          return new Response("Not an image", { status: 400 });
+        }
+        return new Response(imgResp.body, {
+          status: 200,
+          headers: {
+            "Content-Type": contentType,
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=86400"
+          }
+        });
+      } catch {
+        return new Response("Invalid URL", { status: 400 });
+      }
+    }
+
     // 1. Route API requests (/api or /api/*)
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       if (request.method === "OPTIONS") {

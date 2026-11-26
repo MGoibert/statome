@@ -3603,15 +3603,22 @@ function renderStatsView() {
 
     <div class="pills-row" style="margin-bottom:8px;">
       <button class="pill ${state.statsSubTab === "calendar" ? "active" : ""}" onclick="window.setStatsSubTab('calendar')">🗓️ Calendrier</button>
+      <button class="pill ${state.statsSubTab === "dna" ? "active" : ""}" onclick="window.setStatsSubTab('dna')">🧬 Mon ADN</button>
       <button class="pill ${state.statsSubTab === "rhythm" ? "active" : ""}" onclick="window.setStatsSubTab('rhythm')">⚡ Rythme & PAL</button>
       <button class="pill ${state.statsSubTab === "catalog" ? "active" : ""}" onclick="window.setStatsSubTab('catalog')">📚 Catalogue & Genres</button>
       <button class="pill ${state.statsSubTab === "ratings" ? "active" : ""}" onclick="window.setStatsSubTab('ratings')">⭐ Notes & Radar</button>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      <button class="btn" style="padding:5px 10px;font-size:0.75rem;color:var(--primary-light);border-color:rgba(129,140,248,0.4);" onclick="window.exportWrapUpStory('month')">📸 Story Bilan du mois</button>
+      <button class="btn" style="padding:5px 10px;font-size:0.75rem;color:#38BDF8;border-color:rgba(56,189,248,0.4);" onclick="window.exportWrapUpStory('year')">📸 Story Bilan ${curYear}</button>
     </div>
 
     <div id="stats-subview-container"></div>
   `;
 
   if (state.statsSubTab === "calendar") renderStatsCalendarTab();
+  else if (state.statsSubTab === "dna") renderStatsDnaTab();
   else if (state.statsSubTab === "rhythm") renderStatsRhythmTab();
   else if (state.statsSubTab === "catalog") renderStatsCatalogTab(filteredBooks);
   else if (state.statsSubTab === "ratings") renderStatsRatingsTab(filteredBooks);
@@ -3787,9 +3794,14 @@ function renderStatsCalendarTab() {
       <div style="text-align:center;color:var(--primary-light);font-weight:700;font-size:1.05rem;margin-bottom:3px;">
         ${FRENCH_MONTHS[tMonth]} ${tYear}
       </div>
-      <div style="text-align:center;font-size:0.82rem;color:var(--muted);margin-bottom:12px;">
+      <div style="text-align:center;font-size:0.82rem;color:var(--muted);margin-bottom:10px;">
         <b style="color:#34D399;">+${totPages} pages</b> • <b style="color:#38BDF8;">${Math.round(totMin)} min</b> •
         <b>${activeDays}/${numDays} j. actifs</b> • <b style="color:#A78BFA;">${distinctBooks.size} livre(s)</b>
+      </div>
+      <div style="text-align:center;margin-bottom:12px;">
+        <button class="btn" style="padding:5px 12px;font-size:0.78rem;color:var(--primary-light);border-color:rgba(129,140,248,0.45);" onclick="window.exportMonthlyCalendarStory(${tYear}, ${tMonth})">
+          📸 Exporter ce calendrier en Story
+        </button>
       </div>
       <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-weight:700;font-size:0.78rem;color:var(--primary-light);margin-bottom:5px;">
         <div>Lun</div><div>Mar</div><div>Mer</div><div>Jeu</div><div>Ven</div><div>Sam</div><div>Dim</div>
@@ -4474,14 +4486,149 @@ function renderStatsRatingsTab(books) {
   }
 }
 
+// ------------------------------------------
+// 4.5 SOUS-ONGLET 🧬 MON ADN LECTEUR (ANALYSEUR HOLISTIQUE)
+// ------------------------------------------
+function renderStatsDnaTab() {
+  const box = document.getElementById("stats-subview-container");
+  if (!box || typeof window.computeReaderDna !== "function") return;
+  const dna = window.computeReaderDna();
+
+  const maxSpeed = Math.max(1, ...dna.speedCurve.map((c) => c.pph));
+  const maxSlotPct = Math.max(1, ...dna.slots.map((s) => s.pct));
+
+  box.innerHTML = `
+    <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.18), rgba(56,189,248,0.1));border-color:rgba(129,140,248,0.45);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div>
+          <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;color:var(--primary-light);text-transform:uppercase;">🧬 Ton Archétype Lecteur</div>
+          <div style="font-size:1.35rem;font-weight:800;margin-top:4px;">${dna.archetype.emoji} ${escapeHtml(dna.archetype.title)}</div>
+          <div style="font-size:0.83rem;color:var(--muted);margin-top:4px;line-height:1.4;">${escapeHtml(dna.archetype.desc)}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:0.78rem;color:#CBD5E1;">
+        <span>📚 <b>${dna.finishedCount}</b> terminés</span>
+        <span>•</span>
+        <span>⏱️ <b>${dna.totalHours} h</b> lues</span>
+        ${dna.avgRating ? `<span>•</span><span>⭐ <b>${dna.avgRating}/5</b> moy.</span>` : ""}
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:12px;padding:9px;font-size:0.84rem;" onclick="window.exportReaderDnaStory()">
+        📸 Partager ma carte ADN (Story)
+      </button>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;font-size:0.95rem;margin-bottom:6px;">🎯 Moteurs de tes coups de cœur</div>
+      ${dna.topDriver ? `
+        <div style="font-size:0.82rem;color:#CBD5E1;margin-bottom:10px;line-height:1.45;">
+          Ton critère le plus décisif est <b>${dna.topDriver.emoji} ${dna.topDriver.label}</b> (moyenne <b>${dna.topDriver.avgTop}/5</b> sur tes meilleures lectures)${dna.forgivenCriterion && dna.forgivenCriterion.key !== dna.topDriver.key ? `, tandis que tu pardonnes plus facilement <b>${dna.forgivenCriterion.emoji} ${dna.forgivenCriterion.label}</b>.` : "."}
+        </div>
+        <div style="display:grid;gap:8px;">
+          ${dna.rankedCriteria.map((c) => {
+            const barW = Math.max(8, Math.round((c.avgTop / 5) * 100));
+            return `
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:3px;">
+                  <span>${c.emoji} <b>${c.label}</b></span>
+                  <span style="color:var(--primary-light);">Tops : <b>${c.avgTop}/5</b> <span style="color:var(--muted);">(moy. ${c.avgAll})</span></span>
+                </div>
+                <div class="progress-track" style="height:7px;">
+                  <div class="progress-fill" style="width:${barW}%;"></div>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      ` : `
+        <div style="font-size:0.82rem;color:var(--muted);">
+          Note au moins 2 livres avec les critères détaillés (Intrigue, Personnages, Worldbuilding, Plume, Rythme) pour révéler ce qui déclenche tes coups de cœur.
+        </div>
+      `}
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;font-size:0.95rem;margin-bottom:6px;">📈 Dynamique de vitesse au fil d'un livre</div>
+      <div style="font-size:0.82rem;color:#CBD5E1;margin-bottom:10px;">${escapeHtml(dna.curveInsight)}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+        ${dna.speedCurve.map((c) => {
+          const pctH = c.pph > 0 ? Math.max(18, Math.round((c.pph / maxSpeed) * 100)) : 8;
+          return `
+            <div style="background:rgba(15,23,42,0.55);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center;">
+              <div style="height:56px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:6px;">
+                <div style="width:32px;height:${pctH}%;background:linear-gradient(180deg,#38BDF8,#6366F1);border-radius:6px 6px 2px 2px;"></div>
+              </div>
+              <div style="font-weight:800;font-size:0.92rem;color:${c.pph > 0 ? "#F8FAFC" : "var(--muted)"};">${c.pph > 0 ? `${c.pph} p/h` : "—"}</div>
+              <div style="font-size:0.7rem;color:var(--muted);margin-top:2px;">${c.label}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;font-size:0.95rem;margin-bottom:8px;">🕒 Habitudes horaires & Style</div>
+      <div style="display:grid;gap:7px;margin-bottom:10px;">
+        ${dna.slots.map((sl) => {
+          const w = Math.max(4, Math.round((sl.pct / maxSlotPct) * 100));
+          const isPeak = sl.id === dna.peakTimeSlot.id && sl.pct > 0;
+          return `
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:0.77rem;margin-bottom:2px;">
+                <span>${sl.emoji} ${sl.label} ${isPeak ? '<b style="color:#38BDF8;">★ Pic</b>' : ""}</span>
+                <span><b>${sl.pct}%</b>${sl.pph > 0 ? ` <span style="color:var(--muted);">(${sl.pph} p/h)</span>` : ""}</span>
+              </div>
+              <div class="progress-track" style="height:6px;">
+                <div class="progress-fill" style="width:${w}%;background:${isPeak ? "linear-gradient(90deg,#38BDF8,#818CF8)" : "rgba(129,140,248,0.55)"};"></div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.77rem;color:#CBD5E1;padding-top:8px;border-top:1px solid var(--border);">
+        <span>🎯 Focus : <b>${dna.focusPct}%</b> vs 🛋️ Détente : <b>${100 - dna.focusPct}%</b></span>
+        <span>•</span>
+        <span>📅 Week-end : <b>${dna.weekendPct}%</b></span>
+        ${dna.peakSpeedSlot ? `<span>•</span><span>⚡ Plus rapide : <b>${dna.peakSpeedSlot.emoji} ${dna.peakSpeedSlot.pph} p/h</b></span>` : ""}
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:800;font-size:0.95rem;margin-bottom:8px;">📚 Empreinte Genres, DNF & Thèmes de tes notes</div>
+      ${dna.genreStats.length > 0 ? `
+        <div style="display:grid;gap:6px;margin-bottom:12px;">
+          ${dna.genreStats.map((g) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;padding:6px 9px;background:rgba(15,23,42,0.5);border-radius:8px;">
+              <b>${escapeHtml(g.genre)}</b>
+              <span style="color:var(--muted);">
+                <b style="color:var(--text);">${g.read}</b> lus
+                ${g.avgRating ? ` • <b style="color:#FBBF24;">★ ${g.avgRating}</b>` : ""}
+                ${g.dnf > 0 ? ` • <span style="color:#F87171;">${g.dnfRate}% DNF</span>` : ""}
+              </span>
+            </div>
+          `).join("")}
+        </div>
+      ` : `<div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;">Termine quelques livres pour voir ton empreinte par genre.</div>`}
+
+      ${dna.topKeywords.length > 0 ? `
+        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:6px;">💬 Mots & motifs récurrents dans tes notes et critiques :</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${dna.topKeywords.map((k) => `<span style="padding:4px 10px;border-radius:999px;background:rgba(56,189,248,0.14);border:1px solid rgba(56,189,248,0.35);font-size:0.76rem;color:#7DD3FC;">#${escapeHtml(k.word)} <span style="opacity:0.7;">(${k.count})</span></span>`).join("")}
+        </div>
+      ` : `<div style="font-size:0.78rem;color:var(--muted);">Ajoute des notes et critiques finales pour extraire tes thèmes récurrents.</div>`}
+    </div>
+  `;
+}
+
 // ==========================================
 // 5. MODALES (NOTATION MULTI-CRITÈRES + FICHE 3 ONGLETS)
 // ==========================================
+window.state = state;
 function openModal(html) {
   const dlg = document.getElementById("app-modal");
   document.getElementById("modal-content").innerHTML = html;
   if (!dlg.open) dlg.showModal();
 }
+window.openModal = openModal;
 
 window.closeModal = function () {
   const dlg = document.getElementById("app-modal");
@@ -4925,6 +5072,9 @@ window.openBookDetailModal = function (bookId, subTab = "info") {
       <button class="btn btn-primary" style="width:100%;margin-top:14px;" onclick="window.saveBookRatings(${book.id})">
         💾 Enregistrer l'évaluation détaillée
       </button>
+      <button class="btn" style="width:100%;margin-top:8px;color:var(--primary-light);border-color:rgba(129,140,248,0.45);" onclick="window.exportBookReviewStory(${book.id})">
+        📸 Exporter Fiche Avis + Radar (Story)
+      </button>
     `;
   } else {
     tabBody = `
@@ -4946,11 +5096,12 @@ window.openBookDetailModal = function (bookId, subTab = "info") {
       <div style="margin-top:14px;font-weight:700;font-size:0.86rem;">📜 Notes & Citations (${bookNotes.length})</div>
       ${bookNotes.length > 0
         ? bookNotes.map((n) => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
               <div style="flex:1;">
                 <b style="color:var(--primary-light);">${escapeHtml(n.note_type)}</b> ${n.page_number ? `(p. ${n.page_number})` : ""}<br/>
                 <span>${escapeHtml(n.content)}</span>
               </div>
+              <button class="btn" style="padding:4px 8px;font-size:0.75rem;" title="Exporter en Carte Citation" onclick="window.exportQuoteStory(${n.id})">📸</button>
               <button class="btn btn-danger" style="padding:4px 8px;font-size:0.75rem;" onclick="window.deleteNoteFromDetail(${n.id}, ${book.id})">🗑️</button>
             </div>
           `).join("")
