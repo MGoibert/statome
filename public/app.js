@@ -1213,6 +1213,32 @@ function renderReadingView() {
     ? `<div class="book-series">${escapeHtml(book.series_name)}${book.series_volume ? ` • Tome ${book.series_volume}` : ""}</div>`
     : "";
 
+  // Rappel discret des notes/personnages des tomes précédents (uniquement si tome > 1 et notes existantes)
+  let prevSagaNotesHtml = "";
+  if (book.series_name && Number(book.series_volume || 0) > 1) {
+    const prevBookIds = new Set(
+      state.books
+        .filter(
+          (b) =>
+            b.series_name &&
+            b.series_name.toLowerCase() === book.series_name.toLowerCase() &&
+            Number(b.series_volume || 0) > 0 &&
+            Number(b.series_volume) < Number(book.series_volume)
+        )
+        .map((b) => b.id)
+    );
+    const prevNotesCount = state.notes.filter((n) => prevBookIds.has(Number(n.book_id))).length;
+    if (prevNotesCount > 0) {
+      prevSagaNotesHtml = `
+        <div style="margin-top:6px;">
+          <button class="btn" style="padding:4px 9px;font-size:0.73rem;color:#E879F9;border-color:rgba(232,121,249,0.4);" onclick="window.openSagaNotesModal('${escapeHtml(book.series_name).replace(/'/g, "\\'")}', ${Number(book.series_volume)})">
+            🧠 Relire mes notes des tomes précédents (${prevNotesCount})
+          </button>
+        </div>
+      `;
+    }
+  }
+
   const isFoc = state.timer.isFocused !== false;
   const curSec = getTimerSeconds();
   const isRunning = state.timer.isRunning;
@@ -1263,6 +1289,7 @@ function renderReadingView() {
             ⏳ <b>${pagesLeft} p.</b> restantes • 🎯 <b>${estFocusStr}</b> (${Math.round(refFocusSpeed)} p/h)${chillEstPart}
           </div>
           ${targetDateHtml}
+          ${prevSagaNotesHtml}
         </div>
       </div>
     </div>
@@ -1450,9 +1477,306 @@ document.addEventListener("visibilitychange", () => {
 // ==========================================
 // 2. VUE BIBLIOTHÈQUE
 // ==========================================
+function renderSagasResultsHtml(resultsEl) {
+  const q = state.libSearch.toLowerCase().trim();
+  const subTarget = state.libSubgenre && state.libSubgenre !== "Tous" ? state.libSubgenre.toLowerCase() : "";
+
+  const sagaMap = {};
+  for (const b of state.books) {
+    const sName = (b.series_name || "").trim();
+    if (!sName) continue;
+    const key = sName.toLowerCase();
+    if (!sagaMap[key]) sagaMap[key] = { name: sName, books: [] };
+    sagaMap[key].books.push(b);
+  }
+
+  let sagas = Object.values(sagaMap).map((sg) => {
+    sg.books.sort((a, b) => Number(a.series_volume || 999) - Number(b.series_volume || 999));
+    const finished = sg.books.filter((b) => b.status === "Terminé").length;
+    const inProgress = sg.books.some((b) => b.status === "En cours");
+    const rated = sg.books.map((b) => Number(b.rating_global || 0)).filter((r) => r > 0);
+    const avgRating = rated.length > 0 ? rated.reduce((a, b) => a + b, 0) / rated.length : null;
+    const author = sg.books[0] ? sg.books[0].author : "";
+    const bookIds = new Set(sg.books.map((b) => b.id));
+    const notesCount = state.notes.filter((n) => bookIds.has(Number(n.book_id))).length;
+
+    // Détection simple de trous de numérotation (ex: T.1 et T.3 possédés -> T.2 manquant)
+    const intVols = sg.books
+      .map((b) => Number(b.series_volume || 0))
+      .filter((v) => Number.isInteger(v) && v >= 1 && v <= 50);
+    const maxVol = intVols.length > 0 ? Math.max(...intVols) : 0;
+    const volSet = new Set(intVols);
+    const missingVols = [];
+    for (let v = 1; v < maxVol; v++) {
+      if (!volSet.has(v)) missingVols.push(v);
+    }
+
+    return { ...sg, finished, total: sg.books.length, inProgress, avgRating, author, notesCount, missingVols };
+  });
+
+  if (subTarget) {
+    sagas = sagas.filter((sg) =>
+      sg.books.some((b) => (b.fantasy_subgenres || []).some((s) => s.toLowerCase() === subTarget))
+    );
+  }
+  if (q) {
+    sagas = sagas.filter(
+      (sg) =>
+        sg.name.toLowerCase().includes(q) ||
+        sg.author.toLowerCase().includes(q) ||
+        sg.books.some((b) => (b.title || "").toLowerCase().includes(q))
+    );
+  }
+
+  sagas.sort((a, b) => {
+    if (a.inProgress !== b.inProgress) return a.inProgress ? -1 : 1;
+    const aDone = a.finished === a.total ? 1 : 0;
+    const bDone = b.finished === b.total ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return b.total - a.total;
+  });
+
+  const statusEmoji = {
+    "Terminé": "✅",
+    "En cours": "📖",
+    "Bibliothèque": "📚",
+    "Wishlist": "💫",
+    "À acheter": "🛒",
+    "DNF": "❌"
+  };
+
+  const html = sagas
+    .map((sg) => {
+      const pct = Math.round((sg.finished / Math.max(1, sg.total)) * 100);
+      const cover = sg.books.find((b) => b.cover_url)?.cover_url || "";
+      const safeName = escapeHtml(sg.name).replace(/'/g, "\\'");
+      return `
+        <div class="card" style="padding:12px;margin-bottom:10px;border-color:${sg.inProgress ? "rgba(99,102,241,0.5)" : "var(--border)"};">
+          <div style="display:flex;gap:10px;align-items:flex-start;">
+            ${cover
+              ? `<img src="${escapeHtml(cover)}" style="width:46px;height:68px;object-fit:cover;border-radius:6px;flex-shrink:0;" />`
+              : `<div style="width:46px;height:68px;background:#334155;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">🐉</div>`
+            }
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                <div style="font-weight:800;font-size:0.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(sg.name)}</div>
+                ${sg.avgRating ? `<span style="color:#FBBF24;font-size:0.78rem;font-weight:700;flex-shrink:0;">⭐ ${sg.avgRating.toFixed(2).replace(/\.?0+$/, "")}</span>` : ""}
+              </div>
+              <div style="font-size:0.78rem;color:var(--muted);margin-bottom:5px;">${escapeHtml(sg.author)} • <b>${sg.finished}/${sg.total}</b> lu(s)</div>
+              <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${pct}%;background:${pct === 100 ? "#10B981" : "var(--primary)"};"></div></div>
+              ${sg.missingVols.length > 0 ? `<div style="font-size:0.71rem;color:#FBBF24;margin-top:4px;">⚠️ Tome(s) manquant(s) : ${sg.missingVols.map((v) => "T." + v).join(", ")}</div>` : ""}
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:9px;align-items:center;">
+            ${sg.books.map((b) => {
+              const col = STATUS_COLORS[b.status] || "#64748B";
+              const volLbl = b.series_volume ? `T.${b.series_volume}` : b.title.slice(0, 12);
+              return `<button class="btn" style="padding:3px 8px;font-size:0.73rem;border-color:${col}66;background:${col}18;color:var(--text);" onclick="window.openBookDetailModal(${b.id}, 'info')">${statusEmoji[b.status] || "📖"} ${escapeHtml(volLbl)}</button>`;
+            }).join("")}
+            ${sg.notesCount > 0 ? `<button class="btn" style="padding:3px 8px;font-size:0.73rem;color:#E879F9;border-color:rgba(232,121,249,0.4);margin-left:auto;" onclick="window.openSagaNotesModal('${safeName}', 9999)">🧠 Notes (${sg.notesCount})</button>` : ""}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  resultsEl.innerHTML = `
+    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;"><b>${sagas.length}</b> saga(s) suivie(s)</div>
+    ${html || `<div style="text-align:center;color:var(--muted);padding:30px;">Aucune saga trouvée. Renseignez le champ « Série / Saga » sur vos livres !</div>`}
+  `;
+}
+
+window.openSagaNotesModal = function (seriesName, maxVolume = 9999) {
+  const target = String(seriesName || "").toLowerCase();
+  const sagaBooks = state.books
+    .filter(
+      (b) =>
+        b.series_name &&
+        b.series_name.toLowerCase() === target &&
+        (maxVolume >= 9999 || (Number(b.series_volume || 0) > 0 && Number(b.series_volume) < maxVolume))
+    )
+    .sort((a, b) => Number(a.series_volume || 0) - Number(b.series_volume || 0));
+
+  const sections = sagaBooks
+    .map((b) => {
+      const bNotes = state.notes.filter((n) => Number(n.book_id) === b.id);
+      if (bNotes.length === 0) return "";
+      return `
+        <div style="margin-bottom:12px;">
+          <div style="font-weight:700;font-size:0.84rem;color:var(--primary-light);margin-bottom:4px;">
+            📖 ${b.series_volume ? `Tome ${b.series_volume} — ` : ""}${escapeHtml(b.title)}
+          </div>
+          ${bNotes.map((n) => `
+            <div style="background:rgba(15,23,42,0.6);padding:7px 9px;border-radius:8px;border:1px solid var(--border);margin-bottom:5px;font-size:0.8rem;">
+              <b style="color:#E879F9;">${escapeHtml(n.note_type)}</b> ${n.page_number ? `<span style="color:var(--muted);">(p. ${n.page_number})</span>` : ""}<br/>
+              <span>${escapeHtml(n.content)}</span>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    })
+    .filter(Boolean)
+    .join("");
+
+  openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <h3 style="margin:0;">🧠 Notes — ${escapeHtml(seriesName)}</h3>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    ${sections || `<div style="color:var(--muted);font-size:0.84rem;">Aucune note enregistrée sur les tomes précédents.</div>`}
+  `);
+};
+
+let palPickerState = { duration: "all", genre: "all", sagaOnly: false, highRated: false, picks: [] };
+
+function runPalPickerDraw() {
+  const { refFocusSpeed } = computeSpeeds();
+  const speed = refFocusSpeed > 0 ? refFocusSpeed : 45;
+  const startedSagas = new Set(
+    state.books
+      .filter((b) => b.series_name && (b.status === "Terminé" || b.status === "En cours"))
+      .map((b) => b.series_name.toLowerCase())
+  );
+
+  let pool = state.books.filter((b) => b.status === "Bibliothèque");
+  if (palPickerState.duration !== "all") {
+    pool = pool.filter((b) => {
+      const hrs = Number(b.page_count || 300) / speed;
+      if (palPickerState.duration === "short") return hrs < 5;
+      if (palPickerState.duration === "medium") return hrs >= 5 && hrs <= 10;
+      if (palPickerState.duration === "long") return hrs > 10;
+      return true;
+    });
+  }
+  if (palPickerState.genre !== "all") {
+    pool = pool.filter((b) => (b.genres || []).some((g) => g.toLowerCase() === palPickerState.genre.toLowerCase()));
+  }
+  if (palPickerState.sagaOnly) {
+    pool = pool.filter((b) => b.series_name && startedSagas.has(b.series_name.toLowerCase()));
+  }
+  if (palPickerState.highRated) {
+    pool = pool.filter((b) => Number(b.popularity_score || 0) >= 4.0);
+  }
+
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  palPickerState.picks = shuffled.slice(0, 3);
+  return { totalMatches: pool.length, speed, startedSagas };
+}
+
+window.openPalPickerModal = function (redraw = true) {
+  const { totalMatches, speed, startedSagas } = redraw ? runPalPickerDraw() : runPalPickerDraw();
+  const palGenres = Array.from(
+    new Set(
+      state.books
+        .filter((b) => b.status === "Bibliothèque")
+        .flatMap((b) => b.genres || [])
+        .filter(Boolean)
+    )
+  ).sort();
+
+  openModal(`
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">🎲 Piocheur de PAL</h3>
+      <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
+    </div>
+    <div style="font-size:0.8rem;color:var(--muted);margin:6px 0 10px;">
+      Choisissez votre humeur : StaTome pioche 3 candidats dans votre bibliothèque « À lire ».
+    </div>
+
+    <div class="grid-2" style="gap:8px;margin-bottom:8px;">
+      <div>
+        <label style="margin-top:0;">⏱️ Durée estimée</label>
+        <select onchange="window.updatePalPickerFilter('duration', this.value)">
+          <option value="all" ${palPickerState.duration === "all" ? "selected" : ""}>Peu importe</option>
+          <option value="short" ${palPickerState.duration === "short" ? "selected" : ""}>⚡ Court (&lt; 5h)</option>
+          <option value="medium" ${palPickerState.duration === "medium" ? "selected" : ""}>📖 Moyen (5–10h)</option>
+          <option value="long" ${palPickerState.duration === "long" ? "selected" : ""}>🧱 Pavé (&gt; 10h)</option>
+        </select>
+      </div>
+      <div>
+        <label style="margin-top:0;">📚 Genre</label>
+        <select onchange="window.updatePalPickerFilter('genre', this.value)">
+          <option value="all" ${palPickerState.genre === "all" ? "selected" : ""}>Tous les genres</option>
+          ${palGenres.map((g) => `<option value="${escapeHtml(g)}" ${palPickerState.genre === g ? "selected" : ""}>${escapeHtml(g)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;font-size:0.8rem;">
+      <label style="display:flex;align-items:center;gap:5px;margin:0;cursor:pointer;color:var(--text);">
+        <input type="checkbox" ${palPickerState.sagaOnly ? "checked" : ""} onchange="window.updatePalPickerFilter('sagaOnly', this.checked)" />
+        🐉 Suite de saga commencée
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;margin:0;cursor:pointer;color:var(--text);">
+        <input type="checkbox" ${palPickerState.highRated ? "checked" : ""} onchange="window.updatePalPickerFilter('highRated', this.checked)" />
+        ⭐ Pépite (≥ 4.0/5)
+      </label>
+    </div>
+
+    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">
+      <b>${totalMatches}</b> livre(s) éligible(s) dans votre PAL :
+    </div>
+
+    <div style="display:grid;gap:8px;margin-bottom:12px;">
+      ${palPickerState.picks.length > 0
+        ? palPickerState.picks.map((b) => {
+            const est = formatHoursMinutes(Number(b.page_count || 300) / speed);
+            const isSagaCont = b.series_name && startedSagas.has(b.series_name.toLowerCase());
+            return `
+              <div style="display:flex;gap:10px;align-items:center;background:rgba(15,23,42,0.65);padding:9px;border-radius:10px;border:1px solid var(--border);">
+                ${b.cover_url
+                  ? `<img src="${escapeHtml(b.cover_url)}" style="width:44px;height:66px;object-fit:cover;border-radius:6px;flex-shrink:0;" />`
+                  : `<div style="width:44px;height:66px;background:#334155;border-radius:6px;display:flex;align-items:center;justify-content:center;">📖</div>`
+                }
+                <div style="flex:1;min-width:0;">
+                  <div style="font-weight:700;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.title)}</div>
+                  <div style="font-size:0.76rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.author)}</div>
+                  <div style="font-size:0.72rem;color:#38BDF8;margin-top:3px;">
+                    ⏳ ${est} (${b.page_count} p.)${b.popularity_score ? ` • ⭐ ${b.popularity_score}` : ""}${isSagaCont ? " • 🐉 Suite" : ""}
+                  </div>
+                </div>
+                <button class="btn btn-success" style="padding:6px 10px;font-size:0.76rem;flex-shrink:0;" onclick="window.startPickedBook(${b.id})">▶️ Lire</button>
+              </div>
+            `;
+          }).join("")
+        : `<div style="text-align:center;color:var(--muted);padding:18px;font-size:0.83rem;">Aucun livre « À lire » ne correspond à ces critères. Essayez d'élargir un filtre !</div>`
+      }
+    </div>
+
+    <button class="btn btn-primary" style="width:100%;padding:11px;" onclick="window.openPalPickerModal(true)">
+      🔀 Repiocher 3 autres livres
+    </button>
+  `);
+};
+
+window.updatePalPickerFilter = function (key, val) {
+  palPickerState[key] = val;
+  window.openPalPickerModal(true);
+};
+
+window.startPickedBook = async function (bookId) {
+  const book = state.books.find((b) => b.id === Number(bookId));
+  if (!book) return;
+  book.status = "En cours";
+  if (!book.started_at) book.started_at = localDateKey(new Date());
+  state.selectedBookId = book.id;
+  saveLocalCache();
+  window.closeModal();
+  window.switchTab("reading");
+  try {
+    await apiCall("update_book", { book_id: book.id, data: { status: "En cours", started_at: book.started_at } });
+  } catch (e) {
+    console.warn("startPickedBook sync warning:", e);
+  }
+};
+
 function renderLibraryResultsOnly() {
   const resultsEl = document.getElementById("lib-results-box");
   if (!resultsEl) return;
+  if (state.libFilter === "🐉 Mes Sagas") {
+    renderSagasResultsHtml(resultsEl);
+    return;
+  }
   const curMonth = new Date().toISOString().slice(0, 7);
 
   let filtered = state.books.filter((b) => {
@@ -1536,14 +1860,15 @@ function renderLibraryResultsOnly() {
 
 function renderLibraryView() {
   const el = document.getElementById("view-library");
-  const pills = ["Tous", "En cours", "À lire", "PAL du mois", "Terminé", "Wishlist", "À acheter", "DNF"];
+  const pills = ["Tous", "En cours", "À lire", "PAL du mois", "🐉 Mes Sagas", "Terminé", "Wishlist", "À acheter", "DNF"];
 
   // Monte le squelette de recherche une seule fois pour ne JAMAIS détruire l'<input> ni fermer le clavier mobile !
   if (!document.getElementById("lib-search-input")) {
     el.innerHTML = `
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
         <input type="search" id="lib-search-input" placeholder="🔍 Titre, auteur, saga, sous-genre..." value="${escapeHtml(state.libSearch)}" oninput="window.setLibSearch(this.value)" />
-        <button class="btn" style="padding:10px 12px;flex-shrink:0;" onclick="window.toggleLibAdv()">⚙️ Filtres</button>
+        <button class="btn" style="padding:10px 11px;flex-shrink:0;" title="Piocheur de PAL" onclick="window.openPalPickerModal(true)">🎲</button>
+        <button class="btn" style="padding:10px 11px;flex-shrink:0;" onclick="window.toggleLibAdv()">⚙️</button>
       </div>
       <div id="lib-adv-box"></div>
       <div id="lib-pills-box" class="pills-row"></div>

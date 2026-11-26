@@ -12,19 +12,13 @@
 - [ ] **Mot de passe oublié & gestion du mot de passe**
   - *Besoin* : indispensable dès l'ouverture commerciale pour éviter qu'un client payant soit bloqué.
   - *Piste technique* : réinitialisation par email (ex. Resend / Brevo, offre gratuite) + changement de mot de passe dans `👤 Mon Compte`.
-- [ ] **Bandeau de mise à jour PWA automatique**
-  - *Besoin* : éviter aux utilisateurs (notamment sur iPhone) de rester bloqués sur une ancienne version en cache.
-  - *Piste technique* : détection `controllerchange` du Service Worker affichant un bouton discret *« ✨ Mise à jour disponible — Actualiser »*.
 
 ---
 
 ## 🔥 P2 — Rétention quotidienne (Donner envie d'ouvrir l'app chaque soir)
 
-- [ ] **Objectifs de lecture personnalisables**
-  - Objectif annuel en nombre de livres (ex. `24 / 30 livres en 2026`).
-  - Objectif mensuel en pages ou quotidien en minutes (ex. `30 min / jour`).
-- [ ] **Séries de lecture (Streaks 🔥)**
-  - Compteur de jours consécutifs lus + record personnel, avec un mode « jour de grâce » optionnel pour rester bienveillant.
+- [x] **Objectifs de lecture personnalisables** *(livré — Livres/Pages/Temps × Jour/Semaine/Mois/An + Pace Tracker)*
+- [x] **Séries de lecture (Streaks 🔥 / 🌿 Hebdo bienveillant) & Défis thématiques** *(livré)*
 
 ---
 
@@ -47,16 +41,10 @@
     - **Style & Habitudes horaires** : lecteur du matin, de la pause déj, du soir ou nocturne ; semaine vs week-end ; ratio *Focus* vs *Détente* ; créneau horaire où ta vitesse est maximale.
     - **Empreinte Genres & Sous-genres** : comparaison entre ce que tu lis le plus, ce que tu notes le mieux, et tes taux d'abandon (DNF) par genre/sous-genre.
     - **Analyse de tes notes & critiques écrites** : extraction des thèmes et motifs récurrents dans tes commentaires, théories et critiques finales.
-- [ ] **⏱️ Temps restant personnalisé (Focus / Détente) & Planificateur Date Cible**
-  - Affichage sur chaque livre en cours : temps restant calculé selon *ta* vitesse réelle Focus et Détente.
-  - **Mode Club de lecture / Date cible** : choisir une date de fin souhaitée ➔ calcul automatique de l'objectif quotidien (ex. *« 36 pages / jour, ~42 min »*).
-- [ ] **💶 Coût par heure de plaisir (€/heure)**
-  - Croisement du prix (€ via BnF) et du temps réel lu (ex. *« 1,65 €/heure de lecture — 3× moins cher qu'un cinéma »*) + livre/genre le plus rentable.
-- [ ] **🎲 Piocheur de PAL (Mood Picker intelligent)**
-  - Aide à choisir sa prochaine lecture dans *sa propre PAL* en 3 clics : durée estimée (*Court < 5h / Moyen / Pavé*), genre/sous-genre, note communauté ou suite de saga.
-- [ ] **🐉 Tableau de bord « Mes Sagas » & Anti-trou de mémoire**
-  - Vue dédiée par saga : avancement (*Tome 2/4 lus*), note moyenne, tomes possédés vs manquants.
-  - Bouton **« 🧠 Relire mes notes & personnages des tomes précédents »** directement dans l'écran Lecture quand on démarre le tome suivant.
+- [x] **⏱️ Temps restant personnalisé (Focus / Détente) & Planificateur Date Cible** *(livré)*
+- [x] **💶 Coût par heure de plaisir (€/heure)** *(livré)*
+- [x] **🎲 Piocheur de PAL (Mood Picker intelligent)** *(livré sur `staging`)*
+- [x] **🐉 Tableau de bord « Mes Sagas » & Anti-trou de mémoire** *(livré sur `staging`)*
 
 ---
 
