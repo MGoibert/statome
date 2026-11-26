@@ -1,5 +1,5 @@
-const CACHE_NAME = "statome-pwa-v30";
-const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=30", "/app.js?v=30", "/export-cards.js?v=30", "/zbar-wasm.js?v=30", "/zbar.wasm", "/html5-qrcode.min.js?v=30", "/manifest.json"];
+const CACHE_NAME = "statome-pwa-v31";
+const STATIC_ASSETS = ["/", "/index.html", "/styles.css?v=31", "/app.js?v=31", "/export-cards.js?v=31", "/zbar-wasm.js?v=31", "/zbar.wasm", "/html5-qrcode.min.js?v=31", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

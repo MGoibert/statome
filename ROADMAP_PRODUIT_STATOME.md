@@ -24,13 +24,13 @@
 
 ## 🚀 P3 — Croissance organique & Viralité (Bookstagram / BookTok)
 
-- [x] **Exports visuels « Story-Ready » en 1 clic** *(livré sur `staging` — Calendrier mensuel en couvertures, Fiche Avis + Radar 6 critères, Carte Bilan mois/année, Cartes Citations & Carte ADN, 1080×1920 PNG + partage natif)*
+- [x] **Exports visuels « Story-Ready » en 1 clic** *(livré — Carrousel Bilan 4 slides swipable, Calendrier mensuel en couvertures, Fiche Avis + Radar 6 critères, Cartes Citations & Carte ADN, 1080×1920 PNG + partage natif)*
 
 ---
 
 ## 🌟 P3 bis — Facteurs différenciants exclusifs (Introuvables chez les concurrents)
 
-- [x] **🧬 Analyseur de Profil Lecteur complet (« ADN StaTome »)** *(livré sur `staging` — onglet `Stats → 🧬 Mon ADN` : archétype, moteurs de coups de cœur, dynamique Début/Milieu/Fin, habitudes horaires, empreinte genres/DNF et thèmes récurrents des notes)*
+- [x] **🧬 Analyseur de Profil Lecteur complet (« ADN StaTome »)** *(livré — onglet `Stats → 🧬 Mon ADN` : archétype, moteurs de coups de cœur, dynamique Début/Milieu/Fin, habitudes horaires, empreinte genres/DNF et thèmes récurrents des notes)*
 - [x] **⏱️ Temps restant personnalisé (Focus / Détente) & Planificateur Date Cible** *(livré)*
 - [x] **💶 Coût par heure de plaisir (€/heure)** *(livré)*
 - [x] **🎲 Piocheur de PAL (Mood Picker intelligent)** *(livré)*

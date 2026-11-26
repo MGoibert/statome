@@ -1444,17 +1444,20 @@
       });
       const bestDay = Object.entries(dayPagesMap).sort((a, b) => b[1] - a[1])[0] || null;
       const bestSlotIdx = slotCounts.indexOf(Math.max(...slotCounts));
-      const totalSpent = podiumPool.reduce((a, b) => a + Number(b.price || 0), 0);
-      const costPerHour = totalSpent > 0 && totHours > 0 ? (totalSpent / totHours).toFixed(2) : null;
+      const longestSessMins = periodSessions.reduce((m, s) => Math.max(m, Number(s.duration_minutes || 0)), 0);
+      const formatDurLong = (mins) => {
+        const m = Math.round(mins);
+        if (m <= 0) return "—";
+        const h = Math.floor(m / 60);
+        const r = m % 60;
+        return h > 0 ? `${h}h ${String(r).padStart(2, "0")}` : `${m} min`;
+      };
       const avgPagesPerSess = periodSessions.length > 0 ? Math.round(totPages / periodSessions.length) : 0;
 
       const records = [
         { k: "📏 PLUS GROS PAVÉ", v: biggestBook ? `${biggestBook.title} (${biggestBook.page_count} p.)` : "—" },
         { k: "🔥 PLUS GROSSE JOURNÉE", v: bestDay && bestDay[1] > 0 ? `+${bestDay[1]} pages le ${bestDay[0]}` : "—" },
-        { k: "🕒 CRÉNEAU FAVORI", v: slotCounts[bestSlotIdx] > 0 ? slotLabels[bestSlotIdx] : "—" },
-        costPerHour
-          ? { k: "🎬 COÛT / HEURE DE PLAISIR", v: `${costPerHour} € / heure (${totalSpent.toFixed(0)} €)` }
-          : { k: "📖 RYTHME DES SESSIONS", v: `${periodSessions.length} sessions • ${avgPagesPerSess} pages / session` }
+        { k: "🕒 CRÉNEAU FAVORI", v: slotCounts[bestSlotIdx] > 0 ? slotLabels[bestSlotIdx] : "—" }
       ];
 
       let ry = top3.length > 0 ? 955 : 340;
@@ -1474,7 +1477,36 @@
         ctx.fillStyle = "#F8FAFC";
         ctx.font = "800 34px -apple-system, BlinkMacSystemFont, sans-serif";
         wrapText(ctx, rec.v, 120, ry + 112, STORY_W - 240, 40, 1);
-        ry += 188;
+        ry += 186;
+      });
+
+      // Dernière rangée : 2 cartes côte à côte (Plus longue session + Rythme des sessions)
+      const halfW = (STORY_W - 160 - 24) / 2;
+      const dualCards = [
+        { k: "⏱️ PLUS LONGUE SESSION", v: formatDurLong(longestSessMins), sub: "d'affilée" },
+        { k: "📖 RYTHME DES SESSIONS", v: `${periodSessions.length} sessions`, sub: `${avgPagesPerSess} pages / session` }
+      ];
+      dualCards.forEach((dc, idx) => {
+        const dx = 80 + idx * (halfW + 24);
+        drawRoundedRect(ctx, dx, ry, halfW, 170, 22);
+        ctx.fillStyle = "rgba(30,41,59,0.82)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(56,189,248,0.3)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#38BDF8";
+        ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(dc.k, dx + 28, ry + 52);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "800 38px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(dc.v, dx + 28, ry + 108);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "600 23px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(dc.sub, dx + 28, ry + 144);
       });
 
       drawBrandFooter(ctx, `Temps forts • ${periodLabel}`);
