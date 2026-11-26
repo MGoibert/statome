@@ -951,36 +951,141 @@ function parseBookLinkUrl(rawInput) {
   return { query: cleanedQuery || s, detectedFormat, isUrl: true };
 }
 
-async function fetchQuickAutocomplete(queryStr) {
+function looksFrenchTitle(title = "") {
+  const s = String(title || "");
+  if (/[éèêëàâäîïôöùûüçœæ]/i.test(s)) return true;
+  if (/\b(?:le|la|les|des|du|un|une|tome|livre|l'|d'|aux|dans|pour|sur|sous|avec|sans|entre|vers|chevalier|royaume|couronne|ombre|flamme|sang|nuit|étoile|etoile|monde|destin|secret|chroniques?|édition|français)\b/i.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+async function fetchQuickAutocomplete(queryStr, googleBooksApiKey = "") {
   const q = String(queryStr || "").trim();
   if (q.length < 2 || /^https?:\/\//i.test(q)) return [];
-  try {
-    const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q)}`;
-    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
-    if (!resp.ok) return [];
-    const items = await resp.json();
-    if (!Array.isArray(items)) return [];
-    return items.slice(0, 6).map((it) => {
-      const rawTitle = unescapeHtml(it.title || "");
-      const bareTitle = cleanTitleFromSeries(it.bookTitleBare || rawTitle) || rawTitle;
-      const { seriesName, seriesVolume } = extractSeriesInfo(rawTitle);
-      const imgUrl = String(it.imageUrl || "");
-      const cover = imgUrl && !imgUrl.includes("nophoto")
-        ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
-        : "";
-      return {
-        title: bareTitle,
-        author: unescapeHtml((it.author && it.author.name) || ""),
-        cover_url: cover,
-        popularity_score: Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null,
-        page_count: Number(it.numPages || 0) > 0 ? Number(it.numPages) : null,
-        series_name: seriesName || "",
-        series_volume: seriesVolume
-      };
-    }).filter((x) => x.title);
-  } catch {
-    return [];
+
+  const keySuffix = googleBooksApiKey ? `&key=${encodeURIComponent(googleBooksApiKey)}` : "";
+
+  const fetchGoogleFr = async () => {
+    try {
+      const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&langRestrict=fr&maxResults=8${keySuffix}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return [];
+      const json = await resp.json();
+      const items = (json && json.items) || [];
+      return items
+        .map((it) => {
+          const vol = it.volumeInfo || {};
+          const rawTitle = String(vol.title || "").trim();
+          if (!rawTitle) return null;
+          // Éviter les faux livres type "Résumé de ..." / "Fiche de lecture"
+          if (/^(?:résumé|resume|fiche de lecture|analyse complète|summary of)\b/i.test(rawTitle)) return null;
+          const ids = vol.industryIdentifiers || [];
+          const isbn13 = ids.find((i) => i.type === "ISBN_13" && /^97[89]/.test(i.identifier || ""))?.identifier || "";
+          const isbn10 = ids.find((i) => i.type === "ISBN_10")?.identifier || "";
+          const isbn = isbn13 || isbn10 || "";
+          let cover = (vol.imageLinks && (vol.imageLinks.thumbnail || vol.imageLinks.smallThumbnail)) || "";
+          if (cover) {
+            cover = cover.replace("http://", "https://").replace(/&edge=curl/g, "");
+          }
+          const { seriesName, seriesVolume } = extractSeriesInfo(vol.subtitle || rawTitle);
+          const cleanT = cleanTitleFromSeries(rawTitle) || rawTitle;
+          const isFrIsbn = /^(?:9782|97910)/.test(isbn);
+          const score = (cover ? 3 : 0) + (isFrIsbn ? 3 : 0) + (vol.language === "fr" ? 2 : 0) + (vol.averageRating ? 1 : 0);
+          return {
+            title: cleanT,
+            author: (vol.authors || []).join(", "),
+            cover_url: cover,
+            isbn,
+            popularity_score: vol.averageRating ? Math.round(Number(vol.averageRating) * 100) / 100 : null,
+            page_count: vol.pageCount ? Number(vol.pageCount) : null,
+            series_name: seriesName || "",
+            series_volume: seriesVolume,
+            is_fr: true,
+            _score: score
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b._score - a._score);
+    } catch {
+      return [];
+    }
+  };
+
+  const fetchGoodreads = async () => {
+    try {
+      const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(q)}`;
+      const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+      if (!resp.ok) return [];
+      const items = await resp.json();
+      if (!Array.isArray(items)) return [];
+      return items.slice(0, 8).map((it) => {
+        const rawTitle = unescapeHtml(it.title || "");
+        const bareTitle = cleanTitleFromSeries(it.bookTitleBare || rawTitle) || rawTitle;
+        const { seriesName, seriesVolume } = extractSeriesInfo(rawTitle);
+        const imgUrl = String(it.imageUrl || "");
+        const cover = imgUrl && !imgUrl.includes("nophoto")
+          ? imgUrl.replace(/\._S[XY]\d+_\./g, ".").replace(/\._S[XY]\d+_CR\d+,\d+,\d+,\d+_\./g, ".")
+          : "";
+        const isFr = looksFrenchTitle(rawTitle);
+        return {
+          title: bareTitle,
+          author: unescapeHtml((it.author && it.author.name) || ""),
+          cover_url: cover,
+          isbn: "",
+          popularity_score: Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null,
+          page_count: Number(it.numPages || 0) > 0 ? Number(it.numPages) : null,
+          series_name: seriesName || "",
+          series_volume: seriesVolume,
+          is_fr: isFr
+        };
+      }).filter((x) => x.title);
+    } catch {
+      return [];
+    }
+  };
+
+  const [gbFr, grItems] = await Promise.all([fetchGoogleFr(), fetchGoodreads()]);
+
+  // Fusion : titres français (Google Books FR + Goodreads FR) en priorité, puis complément international
+  const merged = [];
+  const seen = new Set();
+  const makeKey = (it) => `${normStr(it.title)}|${authorLastNameToken(it.author)}`;
+
+  const pushUnique = (item) => {
+    const k = makeKey(item);
+    if (seen.has(k)) return;
+    seen.add(k);
+    const { _score, ...cleanItem } = item;
+    merged.push(cleanItem);
+  };
+
+  // 1. Google Books FR d'abord (enrichi avec note/saga Goodreads si correspondance exacte)
+  for (const g of gbFr) {
+    const gk = makeKey(g);
+    const grMatch = grItems.find((r) => makeKey(r) === gk);
+    if (grMatch) {
+      if (!g.popularity_score && grMatch.popularity_score) g.popularity_score = grMatch.popularity_score;
+      if (!g.series_name && grMatch.series_name) {
+        g.series_name = grMatch.series_name;
+        g.series_volume = grMatch.series_volume;
+      }
+      if (!g.cover_url && grMatch.cover_url) g.cover_url = grMatch.cover_url;
+    }
+    pushUnique(g);
   }
+
+  // 2. Goodreads détectés en français ensuite
+  for (const r of grItems.filter((x) => x.is_fr)) {
+    pushUnique(r);
+  }
+
+  // 3. Complément Goodreads (autres langues) s'il reste de la place
+  for (const r of grItems.filter((x) => !x.is_fr)) {
+    pushUnique(r);
+  }
+
+  return merged.slice(0, 6);
 }
 
 async function enrichBookMetadata(isbnOrQuery, googleBooksApiKey = "") {
@@ -1674,7 +1779,8 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
 
     if (action === "quick_autocomplete") {
       const q = String(query.q || body.q || "").trim();
-      const suggestions = await fetchQuickAutocomplete(q);
+      const googleBooksApiKey = (env && env.GOOGLE_BOOKS_API_KEY) || process.env.GOOGLE_BOOKS_API_KEY || "";
+      const suggestions = await fetchQuickAutocomplete(q, googleBooksApiKey);
       return { status: 200, data: { ok: true, suggestions } };
     }
 

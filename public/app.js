@@ -3335,10 +3335,11 @@ window.pickAutocompleteSuggestion = async function (idx) {
   renderAddView();
   forceSyncDraftToDom();
   const fullQ = `${item.title} ${item.author || ""}`.trim();
+  const enrichQ = item.isbn ? item.isbn : fullQ;
   state.extSearchQuery = fullQ;
   setSyncStatus(true, "Enrichissement...");
   try {
-    const data = await apiCall("enrich_book", { q: fullQ });
+    const data = await apiCall("enrich_book", { q: enrichQ });
     if (data && data.best) {
       populateDraftFromMeta(data.best);
       if (!state.addDraft.cover_url && item.cover_url) state.addDraft.cover_url = item.cover_url;
