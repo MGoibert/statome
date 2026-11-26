@@ -495,59 +495,144 @@
     ctx.restore();
   }
 
-  let lastExportBlob = null;
-  let lastExportFilename = "statome-story.png";
+  let carouselSlides = []; // [{ label, dataUrl, blob, filename }]
+  let carouselIdx = 0;
+  let carouselModalTitle = "Story";
 
-  function openStoryPreviewModal(canvas, title, filename) {
-    lastExportFilename = filename || "statome-story.png";
-    const dataUrl = canvas.toDataURL("image/png");
-    canvas.toBlob((blob) => {
-      lastExportBlob = blob;
-    }, "image/png");
+  function canvasToBlobAsync(canvas) {
+    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  }
 
+  function renderCarouselModalBody() {
+    const slide = carouselSlides[carouselIdx];
+    if (!slide) return;
+    const total = carouselSlides.length;
     const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+    const navHtml = total > 1 ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <button class="btn" style="padding:5px 12px;font-size:0.8rem;" onclick="window.shiftStorySlide(-1)">◀️ Préc.</button>
+        <div style="text-align:center;">
+          <div style="font-size:0.78rem;font-weight:700;color:var(--primary-light);">${slide.label} (${carouselIdx + 1}/${total})</div>
+          <div style="display:flex;justify-content:center;gap:6px;margin-top:4px;">
+            ${carouselSlides.map((_, i) => `
+              <span onclick="window.setStorySlide(${i})" style="cursor:pointer;width:${i === carouselIdx ? "18px" : "7px"};height:7px;border-radius:999px;background:${i === carouselIdx ? "#818CF8" : "rgba(148,163,184,0.35)"};transition:all 0.2s;"></span>
+            `).join("")}
+          </div>
+        </div>
+        <button class="btn" style="padding:5px 12px;font-size:0.8rem;" onclick="window.shiftStorySlide(1)">Suiv. ▶️</button>
+      </div>
+    ` : "";
+
+    const multiShareHtml = total > 1 ? `
+      <div style="display:grid;grid-template-columns:${canShare ? "1fr 1fr" : "1fr"};gap:8px;margin-top:8px;">
+        ${canShare ? `<button class="btn btn-primary" style="padding:10px;font-size:0.84rem;" onclick="window.shareAllStorySlides()">📤 Partager tout (${total} slides)</button>` : ""}
+        <button class="btn" style="padding:10px;font-size:0.84rem;" onclick="window.downloadAllStorySlides()">⬇️ Tout télécharger (${total})</button>
+      </div>
+    ` : "";
+
     window.openModal(`
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
-        <h3 style="margin:0;font-size:1rem;">📸 ${title}</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <h3 style="margin:0;font-size:0.98rem;">📸 ${carouselModalTitle}</h3>
         <button class="btn" style="padding:4px 10px;" onclick="window.closeModal()">✕</button>
       </div>
+      ${navHtml}
       <div style="display:flex;justify-content:center;background:#070B14;border-radius:12px;padding:8px;border:1px solid var(--border);">
-        <img src="${dataUrl}" alt="Aperçu Story" style="max-height:58vh;max-width:100%;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.6);" />
+        <img src="${slide.dataUrl}" alt="Aperçu Story" style="max-height:54vh;max-width:100%;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.6);" />
       </div>
-      <div style="display:grid;grid-template-columns:${canShare ? "1fr 1fr" : "1fr"};gap:10px;margin-top:12px;">
-        ${canShare ? `<button class="btn btn-primary" onclick="window.shareLastStoryCard()">📤 Partager (Story)</button>` : ""}
-        <button class="btn ${canShare ? "" : "btn-primary"}" onclick="window.downloadLastStoryCard()">⬇️ Télécharger PNG</button>
+      ${multiShareHtml}
+      <div style="display:grid;grid-template-columns:${canShare ? "1fr 1fr" : "1fr"};gap:8px;margin-top:8px;">
+        ${canShare ? `<button class="btn ${total > 1 ? "" : "btn-primary"}" style="padding:9px;font-size:0.82rem;" onclick="window.shareCurrentStorySlide()">📤 ${total > 1 ? "Partager cette slide" : "Partager (Story)"}</button>` : ""}
+        <button class="btn ${!canShare && total === 1 ? "btn-primary" : ""}" style="padding:9px;font-size:0.82rem;" onclick="window.downloadCurrentStorySlide()">⬇️ ${total > 1 ? "Télécharger cette slide" : "Télécharger PNG"}</button>
       </div>
-      <div style="font-size:0.74rem;color:var(--muted);text-align:center;margin-top:8px;">
+      <div style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:7px;">
         Format HD 1080×1920 prêt pour Instagram / TikTok / WhatsApp.
       </div>
     `);
   }
 
-  window.downloadLastStoryCard = function () {
-    if (!lastExportBlob) return;
-    const url = URL.createObjectURL(lastExportBlob);
+  async function openStoryCarouselModal(rawSlides, title) {
+    carouselModalTitle = title || "Carrousel Story";
+    carouselIdx = 0;
+    carouselSlides = await Promise.all(
+      rawSlides.map(async (s) => ({
+        label: s.label || "Slide",
+        filename: s.filename || "statome-story.png",
+        dataUrl: s.canvas.toDataURL("image/png"),
+        blob: await canvasToBlobAsync(s.canvas)
+      }))
+    );
+    renderCarouselModalBody();
+  }
+
+  async function openStoryPreviewModal(canvas, title, filename) {
+    await openStoryCarouselModal([{ label: title, canvas, filename }], title);
+  }
+
+  window.setStorySlide = function (idx) {
+    if (idx < 0 || idx >= carouselSlides.length) return;
+    carouselIdx = idx;
+    renderCarouselModalBody();
+  };
+
+  window.shiftStorySlide = function (delta) {
+    if (carouselSlides.length <= 1) return;
+    carouselIdx = (carouselIdx + delta + carouselSlides.length) % carouselSlides.length;
+    renderCarouselModalBody();
+  };
+
+  function triggerBlobDownload(blob, filename) {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = lastExportFilename;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+  }
+
+  window.downloadCurrentStorySlide = function () {
+    const s = carouselSlides[carouselIdx];
+    if (s) triggerBlobDownload(s.blob, s.filename);
   };
 
-  window.shareLastStoryCard = async function () {
-    if (!lastExportBlob) return window.downloadLastStoryCard();
+  window.downloadAllStorySlides = function () {
+    carouselSlides.forEach((s, i) => {
+      setTimeout(() => triggerBlobDownload(s.blob, s.filename), i * 300);
+    });
+  };
+
+  window.shareCurrentStorySlide = async function () {
+    const s = carouselSlides[carouselIdx];
+    if (!s || !s.blob) return;
     try {
-      const file = new File([lastExportBlob], lastExportFilename, { type: "image/png" });
+      const file = new File([s.blob], s.filename, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: "StaTome — Ma Story Lecture" });
+        await navigator.share({ files: [file], title: `StaTome — ${s.label}` });
         return;
       }
     } catch (e) {
       if (e && e.name === "AbortError") return;
     }
-    window.downloadLastStoryCard();
+    triggerBlobDownload(s.blob, s.filename);
+  };
+
+  window.shareAllStorySlides = async function () {
+    const files = carouselSlides
+      .filter((s) => s.blob)
+      .map((s) => new File([s.blob], s.filename, { type: "image/png" }));
+    if (files.length === 0) return;
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({ files, title: `StaTome — ${carouselModalTitle}` });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+    }
+    window.downloadAllStorySlides();
   };
 
   function showExportLoading(label) {
@@ -670,22 +755,25 @@
   };
 
   // ==========================================
-  // 4. EXPORT 2 — CARTE BILAN DU MOIS / ANNÉE (WRAP-UP)
+  // 4. EXPORT 2 — CARROUSEL BILAN DU MOIS / ANNÉE (4 SLIDES HD)
   // ==========================================
   window.exportWrapUpStory = async function (mode = "month") {
     const now = new Date();
     const curY = now.getFullYear();
     const curM = now.getMonth();
     const months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+    const monthsShort = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Aoû", "Sep", "Oct", "Nov", "Déc"];
     const periodPrefix = mode === "month"
       ? `${curY}-${String(curM + 1).padStart(2, "0")}`
       : String(curY);
     const periodLabel = mode === "month" ? `${months[curM]} ${curY}` : `Année ${curY}`;
 
-    showExportLoading(`Bilan ${periodLabel}`);
+    showExportLoading(`Carrousel 4 slides — ${periodLabel}`);
 
     const books = (window.state && window.state.books) || [];
     const sessions = (window.state && window.state.sessions) || [];
+    const booksById = {};
+    books.forEach((b) => { booksById[Number(b.id)] = b; });
 
     const periodBooks = books
       .filter((b) => b.status === "Terminé" && String(b.finished_at || "").startsWith(periodPrefix))
@@ -694,115 +782,588 @@
     const periodSessions = sessions.filter((s) => String(s.start_time || "").startsWith(periodPrefix));
     const totPages = periodSessions.reduce((a, s) => a + Number(s.pages_read || 0), 0) ||
       periodBooks.reduce((a, b) => a + Number(b.page_count || 0), 0);
-    const totHours = Math.round((periodSessions.reduce((a, s) => a + Number(s.duration_minutes || 0), 0) / 60) * 10) / 10;
+    const totMins = periodSessions.reduce((a, s) => a + Number(s.duration_minutes || 0), 0);
+    const totHours = Math.round((totMins / 60) * 10) / 10;
     const rated = periodBooks.filter((b) => Number(b.rating_global || 0) > 0);
     const avgNote = rated.length > 0
       ? (rated.reduce((a, b) => a + Number(b.rating_global), 0) / rated.length).toFixed(2)
       : "—";
     const favoriteBook = rated[0] || periodBooks[0] || null;
 
-    const mosaicBooks = periodBooks.slice(0, 12);
-    const imgs = await Promise.all(mosaicBooks.map((b) => loadCoverImage(b.cover_url)));
+    // Précharger toutes les couvertures utiles en parallèle
+    const coverUrls = new Set();
+    periodBooks.slice(0, 12).forEach((b) => { if (b.cover_url) coverUrls.add(b.cover_url); });
+    periodSessions.forEach((s) => { if (s.book_cover) coverUrls.add(s.book_cover); });
+    const imgCache = {};
+    await Promise.all(
+      Array.from(coverUrls).map(async (u) => {
+        imgCache[u] = await loadCoverImage(u);
+      })
+    );
 
-    const { canvas, ctx } = createStoryCanvas();
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#38BDF8";
-    ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
-    ctx.fillText(mode === "month" ? "BILAN DU MOIS" : "BILAN DE L'ANNÉE", STORY_W / 2, 125);
-
-    ctx.fillStyle = "#F8FAFC";
-    ctx.font = "800 72px -apple-system, BlinkMacSystemFont, sans-serif";
-    ctx.fillText(periodLabel, STORY_W / 2, 210);
-
-    // 4 KPI Cards
-    const kpis = [
-      { v: String(periodBooks.length), l: "Livres lus" },
-      { v: String(totPages), l: "Pages" },
-      { v: `${totHours} h`, l: "Temps lu" },
-      { v: avgNote !== "—" ? `${avgNote}★` : "—", l: "Note moy." }
-    ];
-    const kW = 218, kH = 126, kGap = 20, kStartX = (STORY_W - (kW * 4 + kGap * 3)) / 2;
-    kpis.forEach((k, i) => {
-      const kx = kStartX + i * (kW + kGap);
-      drawRoundedRect(ctx, kx, 265, kW, kH, 20);
-      ctx.fillStyle = "rgba(30,41,59,0.85)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(129,140,248,0.35)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.fillStyle = "#F8FAFC";
-      ctx.font = "800 44px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText(k.v, kx + kW / 2, 330);
-      ctx.fillStyle = "#94A3B8";
-      ctx.font = "600 24px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText(k.l, kx + kW / 2, 368);
-    });
-
-    // Mosaïque de couvertures
-    if (mosaicBooks.length > 0) {
-      const cols = mosaicBooks.length <= 4 ? mosaicBooks.length : (mosaicBooks.length <= 6 ? 3 : 4);
-      const rows = Math.ceil(mosaicBooks.length / cols);
-      const mGap = 24;
-      const maxGridW = 920;
-      const cw = Math.min(220, Math.floor((maxGridW - mGap * (cols - 1)) / cols));
-      const ch = Math.round(cw * 1.48);
-      const totalGridW = cols * cw + (cols - 1) * mGap;
-      const startX = (STORY_W - totalGridW) / 2;
-      const startY = 445;
-
-      mosaicBooks.forEach((b, i) => {
-        const c = i % cols;
-        const r = Math.floor(i / cols);
-        const bx = startX + c * (cw + mGap);
-        const by = startY + r * (ch + mGap);
-        drawCoverFit(ctx, imgs[i], bx, by, cw, ch, 14, b.title);
-        if (Number(b.rating_global || 0) > 0) {
-          drawRoundedRect(ctx, bx + cw - 82, by + ch - 38, 74, 30, 10);
-          ctx.fillStyle = "rgba(11,17,32,0.86)";
-          ctx.fill();
-          ctx.fillStyle = "#FBBF24";
-          ctx.font = "700 20px -apple-system, BlinkMacSystemFont, sans-serif";
-          ctx.fillText(`★ ${b.rating_global}`, bx + cw - 45, by + ch - 16);
-        }
-      });
-    } else {
-      ctx.fillStyle = "#64748B";
-      ctx.font = "600 32px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText("Aucun livre terminé sur cette période", STORY_W / 2, 760);
-    }
-
-    // Coup de cœur spotlight
-    if (favoriteBook) {
-      const boxY = 1490;
-      drawRoundedRect(ctx, 80, boxY, STORY_W - 160, 210, 24);
-      ctx.fillStyle = "rgba(99,102,241,0.16)";
+    const drawSlidePill = (ctx, idx, total) => {
+      ctx.save();
+      drawRoundedRect(ctx, STORY_W - 185, 62, 115, 44, 22);
+      ctx.fillStyle = "rgba(129,140,248,0.2)";
       ctx.fill();
       ctx.strokeStyle = "rgba(129,140,248,0.5)";
       ctx.lineWidth = 2;
       ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#C7D2FE";
+      ctx.font = "700 24px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText(`${idx} / ${total}`, STORY_W - 127, 92);
+      ctx.restore();
+    };
 
-      ctx.textAlign = "left";
-      ctx.fillStyle = "#FBBF24";
-      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText("🏆 COUP DE CŒUR DE LA PÉRIODE", 120, boxY + 56);
+    // ---------------------------------------------------------
+    // SLIDE 1/4 : RÉSUMÉ & MOSAÏQUE DES LIVRES DE LA PÉRIODE
+    // ---------------------------------------------------------
+    const s1 = createStoryCanvas();
+    {
+      const { ctx } = s1;
+      drawSlidePill(ctx, 1, 4);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#38BDF8";
+      ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText(mode === "month" ? "BILAN DU MOIS" : "BILAN DE L'ANNÉE", STORY_W / 2, 125);
 
       ctx.fillStyle = "#F8FAFC";
-      ctx.font = "800 38px -apple-system, BlinkMacSystemFont, sans-serif";
-      wrapText(ctx, favoriteBook.title, 120, boxY + 112, STORY_W - 240, 44, 1);
+      ctx.font = "800 72px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText(periodLabel, STORY_W / 2, 210);
 
-      ctx.fillStyle = "#CBD5E1";
-      ctx.font = "600 28px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillText(
-        `${favoriteBook.author}${favoriteBook.rating_global ? ` • ★ ${favoriteBook.rating_global}/5` : ""}`,
-        120,
-        boxY + 164
-      );
+      const kpis = [
+        { v: String(periodBooks.length), l: "Livres lus" },
+        { v: String(totPages), l: "Pages" },
+        { v: `${totHours} h`, l: "Temps lu" },
+        { v: avgNote !== "—" ? `${avgNote}★` : "—", l: "Note moy." }
+      ];
+      const kW = 218, kH = 126, kGap = 20, kStartX = (STORY_W - (kW * 4 + kGap * 3)) / 2;
+      kpis.forEach((k, i) => {
+        const kx = kStartX + i * (kW + kGap);
+        drawRoundedRect(ctx, kx, 265, kW, kH, 20);
+        ctx.fillStyle = "rgba(30,41,59,0.85)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(129,140,248,0.35)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "800 44px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(k.v, kx + kW / 2, 330);
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "600 24px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(k.l, kx + kW / 2, 368);
+      });
+
+      const mosaicBooks = periodBooks.slice(0, 12);
+      if (mosaicBooks.length > 0) {
+        const cols = mosaicBooks.length <= 4 ? mosaicBooks.length : (mosaicBooks.length <= 6 ? 3 : 4);
+        const mGap = 24;
+        const maxGridW = 920;
+        const cw = Math.min(220, Math.floor((maxGridW - mGap * (cols - 1)) / cols));
+        const ch = Math.round(cw * 1.48);
+        const totalGridW = cols * cw + (cols - 1) * mGap;
+        const startX = (STORY_W - totalGridW) / 2;
+        const startY = 445;
+
+        mosaicBooks.forEach((b, i) => {
+          const c = i % cols;
+          const r = Math.floor(i / cols);
+          const bx = startX + c * (cw + mGap);
+          const by = startY + r * (ch + mGap);
+          drawCoverFit(ctx, b.cover_url ? imgCache[b.cover_url] : null, bx, by, cw, ch, 14, b.title);
+          if (Number(b.rating_global || 0) > 0) {
+            drawRoundedRect(ctx, bx + cw - 82, by + ch - 38, 74, 30, 10);
+            ctx.fillStyle = "rgba(11,17,32,0.86)";
+            ctx.fill();
+            ctx.fillStyle = "#FBBF24";
+            ctx.font = "700 20px -apple-system, BlinkMacSystemFont, sans-serif";
+            ctx.fillText(`★ ${b.rating_global}`, bx + cw - 45, by + ch - 16);
+          }
+        });
+      } else {
+        ctx.fillStyle = "#64748B";
+        ctx.font = "600 32px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Aucun livre terminé sur cette période", STORY_W / 2, 760);
+      }
+
+      if (favoriteBook) {
+        const boxY = 1490;
+        drawRoundedRect(ctx, 80, boxY, STORY_W - 160, 210, 24);
+        ctx.fillStyle = "rgba(99,102,241,0.16)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(129,140,248,0.5)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        drawCoverFit(ctx, favoriteBook.cover_url ? imgCache[favoriteBook.cover_url] : null, 110, boxY + 25, 105, 160, 10, favoriteBook.title);
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#FBBF24";
+        ctx.font = "700 25px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("🏆 COUP DE CŒUR", 242, boxY + 62);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "800 36px -apple-system, BlinkMacSystemFont, sans-serif";
+        wrapText(ctx, favoriteBook.title, 242, boxY + 114, 710, 42, 1);
+
+        ctx.fillStyle = "#CBD5E1";
+        ctx.font = "600 27px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(
+          `${favoriteBook.author}${favoriteBook.rating_global ? ` • ★ ${favoriteBook.rating_global}/5` : ""}`,
+          242,
+          boxY + 162
+        );
+      }
+      drawBrandFooter(ctx, `Résumé • ${periodLabel}`);
     }
 
-    drawBrandFooter(ctx, `Wrap-up ${periodLabel}`);
-    openStoryPreviewModal(canvas, `Bilan ${periodLabel}`, `statome-bilan-${periodPrefix}.png`);
+    // ---------------------------------------------------------
+    // SLIDE 2/4 : CALENDRIER / RYTHME & VITESSE DE LECTURE
+    // ---------------------------------------------------------
+    const s2 = createStoryCanvas();
+    {
+      const { ctx } = s2;
+      drawSlidePill(ctx, 2, 4);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#34D399";
+      ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("RYTHME & RÉGULARITÉ", STORY_W / 2, 125);
+
+      ctx.fillStyle = "#F8FAFC";
+      ctx.font = "800 64px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText(mode === "month" ? `Calendrier ${periodLabel}` : `Activité ${curY}`, STORY_W / 2, 205);
+
+      const visualFocusSess = periodSessions.filter((s) => {
+        const b = booksById[Number(s.book_id)];
+        return (!b || b.format !== "Audio") && s.is_focused !== false;
+      });
+      const focusMinsV = visualFocusSess.reduce((a, s) => a + Number(s.duration_minutes || 0), 0);
+      const focusPagesV = visualFocusSess.reduce((a, s) => a + Number(s.pages_read || 0), 0);
+      const focusSpeed = focusMinsV > 0 && focusPagesV > 0 ? Math.round((focusPagesV / focusMinsV) * 60) : 0;
+
+      const activeDaySet = new Set();
+      let focusAllM = 0;
+      periodSessions.forEach((s) => {
+        const dt = new Date(s.start_time);
+        if (!isNaN(dt.getTime())) {
+          activeDaySet.add(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`);
+        }
+        if (s.is_focused !== false) focusAllM += Number(s.duration_minutes || 0);
+      });
+      const focusRatio = totMins > 0 ? Math.round((focusAllM / totMins) * 100) : 100;
+      const avgSessMin = periodSessions.length > 0 ? Math.round(totMins / periodSessions.length) : 0;
+
+      if (mode === "month") {
+        // Mini calendrier mensuel en couvertures
+        const daysInMonth = new Date(curY, curM + 1, 0).getDate();
+        const firstDow = (new Date(curY, curM, 1).getDay() + 6) % 7;
+        const padX = 64;
+        const gap = 10;
+        const cellW = Math.floor((STORY_W - padX * 2 - gap * 6) / 7);
+        const cellH = 160;
+        const startY = 300;
+        const headers = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"];
+
+        ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillStyle = "#64748B";
+        headers.forEach((h, i) => ctx.fillText(h, padX + i * (cellW + gap) + cellW / 2, startY - 18));
+
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dKey = `${curY}-${String(curM + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const ds = periodSessions.filter((s) => {
+            const dt = new Date(s.start_time);
+            if (isNaN(dt.getTime())) return false;
+            return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}` === dKey;
+          });
+          const idx = firstDow + (d - 1);
+          const col = idx % 7;
+          const row = Math.floor(idx / 7);
+          const x = padX + col * (cellW + gap);
+          const y = startY + row * (cellH + gap);
+
+          const best = ds.find((s) => s.book_cover) || ds[0];
+          if (best && best.book_cover && imgCache[best.book_cover]) {
+            drawCoverFit(ctx, imgCache[best.book_cover], x, y, cellW, cellH, 10, best.book_title);
+          } else {
+            drawRoundedRect(ctx, x, y, cellW, cellH, 10);
+            ctx.fillStyle = ds.length > 0 ? "rgba(52,211,153,0.22)" : "rgba(30,41,59,0.5)";
+            ctx.fill();
+            ctx.strokeStyle = ds.length > 0 ? "rgba(52,211,153,0.55)" : "rgba(148,163,184,0.14)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+          drawRoundedRect(ctx, x + 5, y + 5, 32, 26, 7);
+          ctx.fillStyle = "rgba(11,17,32,0.8)";
+          ctx.fill();
+          ctx.fillStyle = "#F8FAFC";
+          ctx.font = "700 18px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(String(d), x + 21, y + 24);
+        }
+      } else {
+        // Graphique barres 12 mois de l'année
+        const monthCounts = Array.from({ length: 12 }, (_, m) => {
+          const pref = `${curY}-${String(m + 1).padStart(2, "0")}`;
+          const bCnt = periodBooks.filter((b) => String(b.finished_at || "").startsWith(pref)).length;
+          const pCnt = periodSessions.filter((s) => String(s.start_time || "").startsWith(pref)).reduce((a, s) => a + Number(s.pages_read || 0), 0);
+          return { m, bCnt, pCnt };
+        });
+        const maxVal = Math.max(1, ...monthCounts.map((x) => x.bCnt > 0 ? x.bCnt : 0));
+        const chartX = 80, chartY = 330, chartW = STORY_W - 160, chartH = 740;
+        drawRoundedRect(ctx, chartX, chartY, chartW, chartH, 26);
+        ctx.fillStyle = "rgba(30,41,59,0.65)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(148,163,184,0.2)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = "#CBD5E1";
+        ctx.font = "700 28px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Livres terminés mois par mois", STORY_W / 2, chartY + 58);
+
+        const barGap = 16;
+        const barW = Math.floor((chartW - 80 - barGap * 11) / 12);
+        const baseLineY = chartY + chartH - 95;
+        const maxBarH = 490;
+
+        monthCounts.forEach((mc, i) => {
+          const bx = chartX + 40 + i * (barW + barGap);
+          const bh = mc.bCnt > 0 ? Math.max(24, Math.round((mc.bCnt / maxVal) * maxBarH)) : 8;
+          const isBest = mc.bCnt === maxVal && mc.bCnt > 0;
+          drawRoundedRect(ctx, bx, baseLineY - bh, barW, bh, 10);
+          ctx.fillStyle = isBest ? "#34D399" : (mc.bCnt > 0 ? "#818CF8" : "rgba(148,163,184,0.2)");
+          ctx.fill();
+
+          if (mc.bCnt > 0) {
+            ctx.fillStyle = isBest ? "#34D399" : "#F8FAFC";
+            ctx.font = "800 26px -apple-system, BlinkMacSystemFont, sans-serif";
+            ctx.fillText(String(mc.bCnt), bx + barW / 2, baseLineY - bh - 14);
+          }
+          ctx.fillStyle = "#94A3B8";
+          ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText(monthsShort[i], bx + barW / 2, baseLineY + 38);
+        });
+      }
+
+      // 4 cartes stats de rythme en bas
+      const rStats = [
+        { e: "⚡", v: focusSpeed > 0 ? `${focusSpeed} p/h` : "—", l: "Vitesse Focus" },
+        { e: "🔥", v: `${activeDaySet.size} j.`, l: "Jours actifs" },
+        { e: "⏱️", v: avgSessMin > 0 ? `${avgSessMin} min` : "—", l: "Moy. / session" },
+        { e: "🎯", v: `${focusRatio}%`, l: "Lecture Focus" }
+      ];
+      const boxW = 445, boxH = 150, bGap = 30;
+      rStats.forEach((st, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const rx = 80 + col * (boxW + bGap);
+        const ry = 1365 + row * (boxH + 26);
+        drawRoundedRect(ctx, rx, ry, boxW, boxH, 22);
+        ctx.fillStyle = "rgba(30,41,59,0.85)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(52,211,153,0.32)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "700 24px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${st.e} ${st.l}`, rx + 28, ry + 54);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "800 48px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(st.v, rx + 28, ry + 116);
+      });
+
+      drawBrandFooter(ctx, `Rythme • ${periodLabel}`);
+    }
+
+    // ---------------------------------------------------------
+    // SLIDE 3/4 : GENRES, SOUS-GENRES & FORMATS
+    // ---------------------------------------------------------
+    const s3 = createStoryCanvas();
+    {
+      const { ctx } = s3;
+      drawSlidePill(ctx, 3, 4);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#E879F9";
+      ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("UNIVERS & SAVEURS", STORY_W / 2, 125);
+
+      ctx.fillStyle = "#F8FAFC";
+      ctx.font = "800 64px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("Genres & Sous-genres", STORY_W / 2, 205);
+
+      // Comptage Genres, Sous-genres et Formats (livres terminés ou lus pendant la période)
+      const activeBookIds = new Set(periodSessions.map((s) => Number(s.book_id)));
+      const genreSourceBooks = periodBooks.length > 0
+        ? periodBooks
+        : books.filter((b) => activeBookIds.has(Number(b.id)));
+
+      const gMap = {};
+      const sgMap = {};
+      const fmtMap = { Papier: 0, Liseuse: 0, Audio: 0 };
+
+      genreSourceBooks.forEach((b) => {
+        const gs = Array.isArray(b.genres) && b.genres.length > 0 ? b.genres : ["Autre"];
+        gs.forEach((g) => {
+          if (!gMap[g]) gMap[g] = { name: g, count: 0, rSum: 0, rCnt: 0 };
+          gMap[g].count++;
+          if (Number(b.rating_global || 0) > 0) {
+            gMap[g].rSum += Number(b.rating_global);
+            gMap[g].rCnt++;
+          }
+        });
+        (b.fantasy_subgenres || []).forEach((sg) => {
+          sgMap[sg] = (sgMap[sg] || 0) + 1;
+        });
+        if (b.format === "Audio") fmtMap.Audio++;
+        else if (b.format === "Numérique") fmtMap.Liseuse++;
+        else fmtMap.Papier++;
+      });
+
+      const topGenres = Object.values(gMap).sort((a, b) => b.count - a.count).slice(0, 5);
+      const topSubgenres = Object.entries(sgMap).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const totalGenreCount = Math.max(1, topGenres.reduce((a, g) => a + g.count, 0));
+      const barColors = ["#818CF8", "#38BDF8", "#E879F9", "#34D399", "#FB923C"];
+
+      // Bloc Top Genres
+      drawRoundedRect(ctx, 80, 275, STORY_W - 160, 620, 26);
+      ctx.fillStyle = "rgba(30,41,59,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(129,140,248,0.28)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#818CF8";
+      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("📚 TOP GENRES LUS", 120, 338);
+
+      if (topGenres.length > 0) {
+        topGenres.forEach((g, i) => {
+          const gy = 395 + i * 96;
+          const pct = Math.round((g.count / totalGenreCount) * 100);
+          const avgR = g.rCnt > 0 ? ` • ★ ${(g.rSum / g.rCnt).toFixed(1)}` : "";
+
+          ctx.textAlign = "left";
+          ctx.fillStyle = "#F8FAFC";
+          ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText(g.name, 120, gy);
+
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#CBD5E1";
+          ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText(`${g.count} (${pct}%)${avgR}`, STORY_W - 120, gy);
+
+          const trackW = STORY_W - 240;
+          drawRoundedRect(ctx, 120, gy + 16, trackW, 24, 12);
+          ctx.fillStyle = "rgba(15,23,42,0.8)";
+          ctx.fill();
+
+          drawRoundedRect(ctx, 120, gy + 16, Math.max(36, Math.round((pct / 100) * trackW)), 24, 12);
+          ctx.fillStyle = barColors[i % barColors.length];
+          ctx.fill();
+        });
+      } else {
+        ctx.fillStyle = "#64748B";
+        ctx.font = "600 30px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Aucune donnée de genre sur cette période.", 120, 460);
+      }
+
+      // Bloc Sous-genres favoris (pills)
+      drawRoundedRect(ctx, 80, 935, STORY_W - 160, 415, 26);
+      ctx.fillStyle = "rgba(30,41,59,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(232,121,249,0.32)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#E879F9";
+      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("✨ SOUS-GENRES DOMINANTS", 120, 998);
+
+      if (topSubgenres.length > 0) {
+        let px = 120;
+        let py = 1040;
+        ctx.font = "700 27px -apple-system, BlinkMacSystemFont, sans-serif";
+        topSubgenres.forEach(([sg, cnt]) => {
+          const txt = `${sg} (${cnt})`;
+          const w = ctx.measureText(txt).width + 44;
+          if (px + w > STORY_W - 110) {
+            px = 120;
+            py += 74;
+          }
+          if (py > 1280) return;
+          drawRoundedRect(ctx, px, py, w, 54, 27);
+          ctx.fillStyle = "rgba(232,121,249,0.16)";
+          ctx.fill();
+          ctx.strokeStyle = "rgba(232,121,249,0.5)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "#F5D0FE";
+          ctx.fillText(txt, px + 22, py + 36);
+          px += w + 16;
+        });
+      } else {
+        ctx.fillStyle = "#64748B";
+        ctx.font = "600 28px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText("Ajoute des sous-genres à tes livres pour voir tes nuances favorites.", 120, 1085);
+      }
+
+      // Bloc Formats (Papier / Liseuse / Audio)
+      drawRoundedRect(ctx, 80, 1390, STORY_W - 160, 310, 26);
+      ctx.fillStyle = "rgba(30,41,59,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(56,189,248,0.3)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#38BDF8";
+      ctx.font = "700 26px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("📖 FORMATS DE LECTURE", 120, 1450);
+
+      const totFmt = Math.max(1, fmtMap.Papier + fmtMap.Liseuse + fmtMap.Audio);
+      const fmtEntries = [
+        { label: "📖 Papier", count: fmtMap.Papier, color: "#818CF8" },
+        { label: "📱 Liseuse", count: fmtMap.Liseuse, color: "#38BDF8" },
+        { label: "🎧 Audio", count: fmtMap.Audio, color: "#34D399" }
+      ];
+      const segW = STORY_W - 240;
+      let curSegX = 120;
+      fmtEntries.forEach((fe) => {
+        if (fe.count <= 0) return;
+        const w = Math.max(24, Math.round((fe.count / totFmt) * segW));
+        drawRoundedRect(ctx, curSegX, 1495, Math.min(w, 120 + segW - curSegX), 36, 12);
+        ctx.fillStyle = fe.color;
+        ctx.fill();
+        curSegX += w + 6;
+      });
+
+      fmtEntries.forEach((fe, i) => {
+        const fx = 120 + i * 290;
+        const pct = Math.round((fe.count / totFmt) * 100);
+        ctx.fillStyle = fe.color;
+        ctx.font = "800 38px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${pct}%`, fx, 1600);
+        ctx.fillStyle = "#CBD5E1";
+        ctx.font = "600 26px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(`${fe.label} (${fe.count})`, fx, 1642);
+      });
+
+      drawBrandFooter(ctx, `Genres & Formats • ${periodLabel}`);
+    }
+
+    // ---------------------------------------------------------
+    // SLIDE 4/4 : PALMARÈS TOP 3 & TEMPS FORTS / RECORDS
+    // ---------------------------------------------------------
+    const s4 = createStoryCanvas();
+    {
+      const { ctx } = s4;
+      drawSlidePill(ctx, 4, 4);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#FBBF24";
+      ctx.font = "700 30px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText("PALMARÈS & RECORDS", STORY_W / 2, 125);
+
+      ctx.fillStyle = "#F8FAFC";
+      ctx.font = "800 64px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.fillText(`Temps forts ${periodLabel}`, STORY_W / 2, 205);
+
+      // Podium Top 3
+      const top3 = periodBooks.slice(0, 3);
+      const medals = ["🥇", "🥈", "🥉"];
+      if (top3.length > 0) {
+        const colW = 280, colGap = 35;
+        const startX = (STORY_W - (top3.length * colW + (top3.length - 1) * colGap)) / 2;
+        top3.forEach((b, i) => {
+          const bx = startX + i * (colW + colGap);
+          const by = i === 0 ? 275 : 320;
+          const cw = i === 0 ? 260 : 230;
+          const ch = Math.round(cw * 1.48);
+          const cx = bx + (colW - cw) / 2;
+
+          ctx.textAlign = "center";
+          ctx.font = "54px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText(medals[i], bx + colW / 2, by + 20);
+
+          drawCoverFit(ctx, b.cover_url ? imgCache[b.cover_url] : null, cx, by + 42, cw, ch, 16, b.title);
+
+          ctx.fillStyle = "#F8FAFC";
+          ctx.font = "700 24px -apple-system, BlinkMacSystemFont, sans-serif";
+          wrapText(ctx, b.title, bx + colW / 2, by + ch + 82, colW, 30, 2);
+
+          if (Number(b.rating_global || 0) > 0) {
+            ctx.fillStyle = "#FBBF24";
+            ctx.font = "800 28px -apple-system, BlinkMacSystemFont, sans-serif";
+            ctx.fillText(`★ ${b.rating_global}/5`, bx + colW / 2, by + ch + 150);
+          }
+        });
+      }
+
+      // Records de la période
+      const biggestBook = [...periodBooks].sort((a, b) => Number(b.page_count || 0) - Number(a.page_count || 0))[0] || null;
+      const dayPagesMap = {};
+      const slotCounts = [0, 0, 0, 0, 0];
+      const slotLabels = ["🌅 Matin", "☀️ Midi", "🌤️ Après-midi", "🌆 Soirée", "🌙 Nocturne"];
+      periodSessions.forEach((s) => {
+        const dt = new Date(s.start_time);
+        if (!isNaN(dt.getTime())) {
+          const dk = `${dt.getDate()}/${dt.getMonth() + 1}`;
+          dayPagesMap[dk] = (dayPagesMap[dk] || 0) + Number(s.pages_read || 0);
+          const h = dt.getHours();
+          const idx = h >= 5 && h < 11 ? 0 : (h >= 11 && h < 14 ? 1 : (h >= 14 && h < 18 ? 2 : (h >= 18 && h < 22 ? 3 : 4)));
+          slotCounts[idx] += Number(s.duration_minutes || 0);
+        }
+      });
+      const bestDay = Object.entries(dayPagesMap).sort((a, b) => b[1] - a[1])[0] || null;
+      const bestSlotIdx = slotCounts.indexOf(Math.max(...slotCounts));
+      const totalSpent = periodBooks.reduce((a, b) => a + Number(b.price || 0), 0);
+      const costPerHour = totalSpent > 0 && totHours > 0 ? (totalSpent / totHours).toFixed(2) : null;
+
+      const records = [
+        { k: "📏 PLUS GROS PAVÉ", v: biggestBook ? `${biggestBook.title} (${biggestBook.page_count} p.)` : "—" },
+        { k: "🔥 PLUS GROSSE JOURNÉE", v: bestDay && bestDay[1] > 0 ? `+${bestDay[1]} pages le ${bestDay[0]}` : "—" },
+        { k: "🕒 CRÉNEAU FAVORI", v: slotCounts[bestSlotIdx] > 0 ? slotLabels[bestSlotIdx] : "—" },
+        { k: "🎬 COÛT / HEURE DE PLAISIR", v: costPerHour ? `${costPerHour} € / heure` : `${periodSessions.length} sessions enregistrées` }
+      ];
+
+      let ry = 955;
+      records.forEach((rec) => {
+        drawRoundedRect(ctx, 80, ry, STORY_W - 160, 160, 22);
+        ctx.fillStyle = "rgba(30,41,59,0.82)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(251,191,36,0.28)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#FBBF24";
+        ctx.font = "700 23px -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.fillText(rec.k, 120, ry + 54);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "800 34px -apple-system, BlinkMacSystemFont, sans-serif";
+        wrapText(ctx, rec.v, 120, ry + 112, STORY_W - 240, 40, 1);
+        ry += 188;
+      });
+
+      drawBrandFooter(ctx, `Temps forts • ${periodLabel}`);
+    }
+
+    await openStoryCarouselModal(
+      [
+        { label: "1. Résumé & Livres", canvas: s1.canvas, filename: `statome-${periodPrefix}-1-resume.png` },
+        { label: "2. Calendrier & Rythme", canvas: s2.canvas, filename: `statome-${periodPrefix}-2-rythme.png` },
+        { label: "3. Genres & Sous-genres", canvas: s3.canvas, filename: `statome-${periodPrefix}-3-genres.png` },
+        { label: "4. Palmarès & Records", canvas: s4.canvas, filename: `statome-${periodPrefix}-4-records.png` }
+      ],
+      `Carrousel Bilan ${periodLabel}`
+    );
   };
 
   // ==========================================
