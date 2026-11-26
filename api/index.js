@@ -1111,8 +1111,9 @@ async function fetchSagaVolumes(seriesName, author = "") {
         if (authLast && fAuth && !normStr(fAuth).includes(authLast)) continue;
         const s225a = getField("225", "a") || getField("461", "t");
         const s225v = getField("225", "v") || getField("461", "v") || getField("200", "h");
-        const vol = extractVolFromTitle(`${s225v} ${title}`);
-        if (vol === null) continue;
+        const directVolM = String(s225v || "").match(/(\d+(?:[.,]\d+)?)/);
+        const vol = directVolM ? parseFloat(directVolM[1].replace(",", ".")) : extractVolFromTitle(title);
+        if (vol === null || vol <= 0 || vol > 150) continue;
         // Vérifier que ça appartient bien à la série demandée
         if (s225a && !normStr(s225a).includes(normSeries.slice(0, 8)) && !normSeries.includes(normStr(s225a).slice(0, 8))) continue;
         const isbn = getField("073", "a").replace(/\D/g, "") || getField("010", "a").replace(/\D/g, "");
@@ -1159,14 +1160,6 @@ async function fetchSagaVolumes(seriesName, author = "") {
     if (!rawT || isBoxSet(rawT)) continue;
     const itAuth = unescapeHtml((it.author && it.author.name) || "");
     if (authLast && itAuth && !normStr(itAuth).includes(authLast)) continue;
-    const vol = extractVolFromTitle(rawT);
-    if (vol === null || vol <= 0 || vol > 150) continue;
-
-    // Vérifier que le titre ou la série évoque bien la saga
-    const normRaw = normStr(rawT);
-    const seriesTokens = normSeries.split(" ").filter((w) => w.length >= 4);
-    const matchesSeries = seriesTokens.length === 0 || seriesTokens.some((tok) => normRaw.includes(tok));
-    if (!matchesSeries) continue;
 
     const cleanT = cleanTitleFromSeries(it.bookTitleBare || rawT) || rawT;
     const imgUrl = String(it.imageUrl || "");
@@ -1176,6 +1169,27 @@ async function fetchSagaVolumes(seriesName, author = "") {
     const rating = Number(it.avgRating || 0) > 0 ? Math.round(Number(it.avgRating) * 100) / 100 : null;
     const pages = Number(it.numPages || 0) > 0 ? Number(it.numPages) : null;
     const ratingsCount = Number(it.ratingsCount || 0);
+
+    // Si Goodreads n'a pas de numéro de tome dans le titre (ex: "Le Lys de feu : La Houle éclatante"),
+    // on tente de le rattacher à un tome BnF existant par similarité de titre !
+    let vol = extractVolFromTitle(rawT);
+    if (vol === null) {
+      const normGr = normStr(rawT);
+      for (const ex of byVol.values()) {
+        const normEx = normStr(ex.title);
+        if (normEx.length >= 4 && normGr.includes(normEx)) {
+          vol = ex.series_volume;
+          break;
+        }
+      }
+    }
+    if (vol === null || vol <= 0 || vol > 150) continue;
+
+    // Vérifier que le titre ou la série évoque bien la saga
+    const normRaw = normStr(rawT);
+    const seriesTokens = normSeries.split(" ").filter((w) => w.length >= 4);
+    const matchesSeries = seriesTokens.length === 0 || seriesTokens.some((tok) => normRaw.includes(tok)) || byVol.has(String(vol));
+    if (!matchesSeries) continue;
 
     const key = String(vol);
     if (!byVol.has(key)) {
@@ -1578,7 +1592,7 @@ async function handleApiRequest({ query = {}, headers = {}, body = {}, env = {} 
       const sName = String(query.series_name || body.series_name || "").trim();
       const sAuth = String(query.author || body.author || "").trim();
       if (!sName) return { status: 200, data: { ok: true, volumes: [] } };
-      const cacheKey = `saga:${normStr(sName)}:${authorLastNameToken(sAuth)}`.slice(0, 110);
+      const cacheKey = `saga2:${normStr(sName)}:${authorLastNameToken(sAuth)}`.slice(0, 110);
       const cached = await neonQuery(connStr, "SELECT payload FROM catalog_cache WHERE query_key = $1", [cacheKey]).catch(() => []);
       if (cached && cached.length > 0 && cached[0].payload) {
         try {
