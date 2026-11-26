@@ -6,7 +6,7 @@
 
 ## 🎯 P1 — Indispensables avant le lancement payant (Adoption & Support)
 
-- [x] **Import CSV en 1 clic (Goodreads / StoryGraph / Babelio / générique)** *(livré sur `staging` — auto-détection encodage & séparateur, dédoublonnage, guide export intégré, enrichissement progressif couvertures/genres dans `👤 Mon Compte`)*
+- [x] **Import CSV en 1 clic (Goodreads / StoryGraph / Babelio / générique)** *(livré — auto-détection encodage & séparateur, dédoublonnage, guide export intégré, enrichissement progressif couvertures/genres dans `👤 Mon Compte`)*
 - [ ] **Mot de passe oublié & gestion du mot de passe**
   - *Besoin* : indispensable dès l'ouverture commerciale pour éviter qu'un client payant soit bloqué.
   - *Piste technique* : réinitialisation par email (ex. Resend / Brevo, offre gratuite) + changement de mot de passe dans `👤 Mon Compte`.
